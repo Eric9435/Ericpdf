@@ -275,8 +275,8 @@ private fun MainApp() {
                     } else if(recording.docId!=null && recording.docId!=item.id &&
                         recording.event !in setOf("idle","stopped","error")) {
                         toast="Finish the recording in the other PDF before starting a new lecture"
-                    } else if(cloudMode && (!cloudEndpoint.startsWith("https://") || cloudCode.isBlank())) {
-                        toast="Set up HTTPS cloud token-server URL and access code on the Library screen first"
+                    } else if(cloudMode && (!cloudEndpoint.startsWith("https://") || !cloudEndpoint.trim().endsWith("/transcribe") || cloudCode.length<24)) {
+                        toast="Enter your OpenRouter /transcribe proxy URL and access code in Library first"
                     } else {
                         pendingMicPage=currentPage
                         confirmRecording=true
@@ -289,7 +289,7 @@ private fun MainApp() {
     if(confirmRecording) AlertDialog(onDismissRequest={confirmRecording=false},
         title={Text("Recording permission")},
         text={Text(if(cloudMode)
-            "Recording requires professor permission. Online mode sends microphone audio to a third-party speech provider. PDFs and WAV remain locally stored. API charges may apply."
+            "Recording requires professor permission. Online mode sends short audio chunks via your server to OpenRouter. PDFs and WAV remain locally stored; OpenRouter may charge for speech-to-text."
             else "Record your professor only after obtaining permission. Audio and transcripts remain private to this device unless you export them.")},
         confirmButton={TextButton(onClick={
             confirmRecording=false
@@ -335,7 +335,7 @@ private fun HomeScreen(
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val onlineConfigured=cloudEndpoint.trim().startsWith("https://") && cloudCode.isNotBlank()
+    val onlineConfigured=cloudEndpoint.trim().startsWith("https://") && cloudEndpoint.trim().endsWith("/transcribe") && cloudCode.length>=24
     Column(Modifier.fillMaxSize()) {
         Surface(color=Navy) {
             Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=22.dp)) {
@@ -398,7 +398,7 @@ private fun HomeScreen(
                 FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("English ASR")})
                 FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("Deutsch ASR")})
                 Text(
-                    if(cloudMode) (if(onlineConfigured) "Configured • not tested" else "Setup required")
+                    if(cloudMode) (if(onlineConfigured) "URL entered • not tested" else "Setup required")
                     else if(hasModel) "Offline model ready" else "Offline model needed",
                     style=MaterialTheme.typography.labelSmall,
                     color=if((cloudMode && onlineConfigured)||(!cloudMode && hasModel))
@@ -413,19 +413,19 @@ private fun HomeScreen(
                 ) {
                     Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                         Text(if(onlineConfigured) "Online settings entered — not connected yet"
-                            else "Online transcription needs a server",
+                            else "Online transcription needs an OpenRouter proxy",
                             style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
                         Text(if(onlineConfigured)
-                            "The connection will be attempted after you open a PDF and tap Record."
-                            else "1. Deploy the EricPDF token server on Render.  2. Add your private OpenAI API key and access code to Render.  3. Enter its HTTPS /session URL and access code below.",
+                            "After recording begins, captions appear in ~6-second batches plus network processing."
+                            else "1. Deploy the OpenRouter proxy on Render.  2. Add OPENROUTER_API_KEY and a private access code.  3. Enter its HTTPS /transcribe URL and code below.",
                             style=MaterialTheme.typography.bodySmall)
-                        Text("Speech audio is sent online only while recording in Online mode. API usage may incur charges.",
+                        Text("Online mode uploads ~6-second speech chunks to OpenRouter for transcription. Usage may incur charges.",
                             style=MaterialTheme.typography.labelSmall,color=Color(0xFF81542C))
                     }
                 }
                 OutlinedTextField(value=cloudEndpoint,onValueChange=onCloudEndpoint,
                     modifier=Modifier.fillMaxWidth(),singleLine=true,
-                    label={Text("HTTPS token-server URL ending in /session")})
+                    label={Text("HTTPS OpenRouter proxy URL ending in /transcribe")})
                 OutlinedTextField(value=cloudCode,onValueChange=onCloudCode,
                     modifier=Modifier.fillMaxWidth(),singleLine=true,
                     visualTransformation=PasswordVisualTransformation(),

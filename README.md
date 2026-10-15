@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.3.0)
+## Implemented in this source project (v0.4.0)
 
 | Feature | Implementation |
 |---|---|
@@ -21,7 +21,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Annotation timeline | Audio timestamp and current PDF page cues persisted during page changes/ink events |
 | Transcript | Search, correct recognized text, jump to transcript's page/timestamp |
 | Exports | Save annotated PDF (rasterized pages), export transcripts as `.txt`, save original lecture WAV files |
-| Data locality | No account, no analytics, no backend, no `INTERNET` permission, no cloud upload |
+| Data locality | Original PDFs, audio recordings and notes remain local. Optional online mode sends short mic audio chunks via an authenticated HTTPS proxy to OpenRouter; Offline mode does not transmit audio. |
 | Backup / restore | Manual local ZIP export and import of PDFs, annotations, typed notes and WAV/transcript sessions; Vosk language models excluded |
 
 > **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
@@ -113,10 +113,24 @@ This original project source is provided for customization. Third-party dependen
 
 **Live notes** are timestamped recognized phrases associated with the current PDF page, not an AI-generated conceptual summary. Provisional recognition may change; only finalized phrases are saved. The offline model is needed for both transcription and automatic notes. Recording may continue with the screen locked after the user starts it while the app is visible, but system power restrictions or microphone contention may interrupt it. Android displays a persistent recording notification with a Stop control. Recording without a speech model still saves WAV audio only.
 
-## Optional Online transcription (v0.3.0)
+## Optional Online transcription (v0.4.0)
 
-Select **Online** from Library settings. This streams microphone audio over encrypted WSS to a speech provider via an ephemeral credential; PDFs, WAV recordings and transcript files remain in app-private storage. Requires a separately hosted authenticated token issuer in `cloud-session-server/`, an OpenAI API key stored only in the server's environment, and API billing. Enter its HTTPS `/session` URL and access code in the app. The access code is kept in runtime memory, not saved. Offline Vosk remains selectable. If the cloud connection fails, WAV recording continues locally without live cloud captions. Obtain lecturer permission before recording. Realtime transcripts may be inaccurate. See the separate server setup instructions and account usage limits.
+**OpenRouter replaces the OpenAI API completely.** The audio is sent in ~6-second
+batches to the authenticated Node proxy in `cloud-session-server/`, which forwards
+it to `https://openrouter.ai/api/v1/audio/transcriptions`. This is near-live, not
+continuous word-by-word streaming; the delay includes chunk length and networking.
 
-## Understanding the Home screen
+OpenRouter's `openai/whisper-large-v3-turbo` model is an open-source Whisper
+speech-to-text model offered through providers such as Groq/DeepInfra. The model
+slug identifies its creator; you **do not need an OpenAI API account**.
 
-Use **Online** if you have deployed the optional token server. The app then displays a **Setup required** notice until both the HTTPS /session URL and access code have been entered. Entering them does not verify connectivity; recording initiates the connection. The Vosk **Import offline model** button is intentionally visible only in Offline mode. A ZIP import error concerning Vosk `am/conf` folders is an offline-only setup issue and not an online-server problem. Import a lecture PDF first before recording; the live notes panel is inside the document reader.
+Deploy the proxy with private environment variables `OPENROUTER_API_KEY` and
+`ERICPDF_ACCESS_TOKEN` (24+ characters). Use
+`https://YOUR-SERVICE.onrender.com/transcribe` in the app. OpenRouter usage
+and Render hosting may cost money. The original PDF, WAV and notes remain local,
+and Offline mode with Vosk still requires no network access.
+
+**Limitation:** Cut words around the 6-second boundary can be inaccurate or
+missing. If transcription fails, the WAV continues recording, but those
+failed cloud segments will not automatically transcribe. Real-device tests
+with long German/English lectures are required.

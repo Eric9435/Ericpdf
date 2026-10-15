@@ -90,6 +90,9 @@ jobs:
           gradle-version: '8.13'
           cache-disabled: true
 
+      - name: Validate OpenRouter proxy JavaScript
+        run: node --check cloud-session-server/server.js
+
       - name: Build APK and test
         run: gradle :app:assembleDebug :app:testDebugUnitTest --stacktrace
 

@@ -1,46 +1,42 @@
-# EricPDF — Optional online speech server
+# EricPDF OpenRouter transcription proxy
 
-The app's **Online** option requires this small authentication service. It exchanges the
-app's private access code for a short-lived OpenAI Realtime transcription credential.
-The Android APK never contains your permanent OpenAI API key.
+The Android app **does not** need an OpenAI API account or OpenAI API key.
 
-## Deploy
+EricPDF records the full WAV locally and, when **Online** is selected, sends
+~6-second audio chunks through this HTTPS proxy. The server sends the WAV
+to OpenRouter's `/api/v1/audio/transcriptions` using your private OpenRouter key,
+returning a text segment. This is **near-live** transcription (~6 seconds plus
+network processing), not continuous per-word streaming.
 
-1. Create an API project and secret key in your OpenAI API dashboard (this is
-   **separate from ChatGPT Plus**; speech API usage is billable).
-2. Deploy this `cloud-session-server` folder as a Node 20+ Web Service on Render
-   or an equivalent host. On Render set **Root directory** to
-   `cloud-session-server` and **Start command** to `npm start`.
-3. Under your hosting service's private Environment settings add:
-   `OPENAI_API_KEY` = your API key, and
-   `ERICPDF_ACCESS_TOKEN` = a random private string at least 24 characters long.
-   NEVER commit either value to GitHub or paste them into this chat.
-4. Start the service. Check `https://YOUR-SERVICE.onrender.com/health` shows `{"ok":true}`.
-5. In EricPDF → Library choose **Online**, enter the HTTPS address
-   `https://YOUR-SERVICE.onrender.com/session` and enter the same
-   `ERICPDF_ACCESS_TOKEN` access code.
-6. Set English or German as appropriate, import a PDF, obtain recording permission
-   from your professor, then tap **Record**.
+## Deploy on Render
 
-### Privacy and cost
-- PDFs, bookmarks, handwritten notes, transcripts and WAV recordings remain local.
-- During online mode **live audio is transmitted to OpenAI** for transcription,
-  subject to the provider's own data processing terms.
-- No live audio or transcript is stored by this token-issuing service.
-- Your main API key exists **only** in the server environment.
-- The server requires an access code, limits requests per IP and issues 60-second tokens.
-  This sample is **single-user** infrastructure, not hardened multi-tenant production
-  authentication. Add persistent abuse quotas and auth if publishing a multi-user app.
-- Select **Offline** to use on-device Vosk without network requests.
-- If cloud transcription fails, EricPDF still writes the raw lecture WAV;
-  speech in the disconnected interval cannot appear in live notes.
-- Provider costs and hosting costs depend on usage. Set an API project budget.
-- Live captions may be inaccurate, especially for equations and technical terminology.
-- On Android, the foreground microphone service normally works after app backgrounding
-  but can be interrupted by OS power management, microphone conflicts or user settings.
+1. Create your OpenRouter API key: https://openrouter.ai/settings/keys
+2. Deploy GitHub `Eric9435/Ericpdf`, branch `main`, as a Node web service.
+   Set **root directory** `cloud-session-server`, build command `npm install`,
+   start command `npm start`, region **Frankfurt**.
+3. Set **private environment variables** in Render:
+   - `OPENROUTER_API_KEY` — your OpenRouter key
+   - `ERICPDF_ACCESS_TOKEN` — a random string of at least 24 characters
+   - `OPENROUTER_STT_MODEL` — optional, defaults to `openai/whisper-large-v3-turbo`
+   - `ERICPDF_MAX_DAILY_AUDIO_SECONDS` — optional, default 7200
+4. Deploy. Check `https://YOUR-SERVICE.onrender.com/health`.
+5. On your phone: EricPDF → **Online** → set URL
+   `https://YOUR-SERVICE.onrender.com/transcribe`
+   and enter the same `ERICPDF_ACCESS_TOKEN`.
+6. Import PDF; obtain professor's recording permission; tap Record.
 
-Live transcription docs:
-https://developers.openai.com/api/docs/guides/realtime-transcription
+### Security and costs
 
-Ephemeral token docs:
-https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
+- Keep OpenRouter keys and server access codes **out of GitHub** and chat.
+- Render does not persist audio/transcript in this proxy implementation,
+  but OpenRouter and the selected upstream provider process each submitted clip.
+- Private local data (PDFs, full WAV, ink, notes) remains on your device.
+- Cloud recognition is opt-in and can incur API charges, independently of ChatGPT.
+- Request rate limiting and daily audio usage limits are memory-only, so
+  they reset on server restart. Also configure OpenRouter billing limits.
+- An Internet outage does not prevent the local WAV recording from continuing.
+- Word cuts between audio chunks may reduce transcription accuracy.
+
+See OpenRouter's own docs:
+https://openrouter.ai/blog/tutorials/transcription-on-openrouter/
+https://openrouter.ai/openai/whisper-large-v3-turbo/api
