@@ -382,9 +382,9 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
             } finally {
                 // Keep the ink suppression flag until the next drawing gesture.
             }
-            if(sawPair && !hadPinch && zoom<=1.05f &&
-                abs(total.x)>=minDistance && abs(total.x)>abs(total.y)*1.45f) {
-                onPageSwipe(if(total.x<0f) 1 else -1)
+            if(sawPair) {
+                val direction=TwoFingerPageTurn.direction(total.x,total.y,hadPinch,zoom,minDistance)
+                if(direction!=0) onPageSwipe(direction)
             }
         }
     }
