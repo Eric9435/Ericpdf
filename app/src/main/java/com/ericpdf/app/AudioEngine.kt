@@ -54,7 +54,10 @@ class LectureRecorderService : Service() {
                 if (!running) {
                     val id = intent.getStringExtra(AudioSignals.FIELD_DOC) ?: return START_NOT_STICKY
                     val lang = intent.getStringExtra("language") ?: "en"
-                    startCapture(id, lang, intent.getIntExtra("page",0))
+                    startCapture(id,lang,intent.getIntExtra("page",0),
+                        intent.getBooleanExtra("cloudMode",false),
+                        intent.getStringExtra("cloudEndpoint").orEmpty(),
+                        intent.getStringExtra("cloudCode").orEmpty())
                 } else sendStatus("recording")
             }
             AudioSignals.STOP -> { running = false; capture?.stopSafely() }
@@ -65,7 +68,8 @@ class LectureRecorderService : Service() {
         }
         return START_NOT_STICKY
     }
-    private fun startCapture(id: String, lang: String, startingPage:Int) {
+    private fun startCapture(id:String,lang:String,startingPage:Int,
+        online:Boolean,endpoint:String,code:String) {
         if (runCatching { library.get(id) }.isFailure) { sendStatus("error", "Document not found"); stopSelf(); return }
         docId=id; sessionId=UUID.randomUUID().toString(); page=startingPage.coerceAtLeast(0)
         val session = LectureSession(sessionId!!, System.currentTimeMillis(), 0, lang, emptyList())
@@ -77,7 +81,7 @@ class LectureRecorderService : Service() {
         val notification=Notification.Builder(this,"lecture_audio")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("EricPDF lecture recording")
-            .setContentText("Microphone is active • stored on this device")
+            .setContentText(if(online) "Online transcription • local WAV saved" else "Microphone is active • stored on this device")
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null,"Stop",pending).build()).build()
         try {
@@ -85,14 +89,15 @@ class LectureRecorderService : Service() {
                 startForeground(310, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else startForeground(310,notification)
         } catch (e: Exception) { running=false; sendStatus("error",e.message ?: "Microphone permission needed"); stopSelf(); return }
-        worker=thread(name="ericpdf-record",isDaemon=false) { recordLoop(id, session) }
+        worker=thread(name="ericpdf-record",isDaemon=false) { recordLoop(id,session,online,endpoint,code) }
     }
-    private fun recordLoop(id: String, session: LectureSession) {
+    private fun recordLoop(id: String, session: LectureSession,online:Boolean,endpoint:String,code:String) {
         val wav = library.recordingFile(id, session.id).apply { parentFile?.mkdirs() }
         var audio: AudioRecord? = null
         var raf: RandomAccessFile? = null
         var model: Model? = null
         var recognizer: Recognizer? = null
+        var cloud:OnlineLectureTranscriber?=null
         var totalBytes = 0L
         val segments=mutableListOf<TranscriptSegment>()
         var lastSegmentEnd=0L
@@ -108,12 +113,32 @@ class LectureRecorderService : Service() {
             capture=audio
             raf=RandomAccessFile(wav,"rw").also { it.setLength(0); WavFile.writeHeader(it,0L) }
             val modelPath = library.modelDirectory(session.language)
-            if (modelPath.isDirectory && File(modelPath,"am").isDirectory) {
+            if (online) {
+                try {
+                    cloud=OnlineLectureTranscriber(endpoint,code,session.language,
+                        partial={sendStatus("partial",partial=it)},
+                        final={phrase ->
+                            synchronized(segments) {
+                                val end=(SystemClock.elapsedRealtime()-elapsedStart).coerceAtLeast(0)
+                                segments.add(TranscriptSegment(lastSegmentEnd,end,phrase.take(20000),page))
+                                lastSegmentEnd=end
+                                persistTranscriptAndNotes(id,session,end,segments)
+                            }
+                            sendStatus("transcript")
+                        },
+                        error={sendStatus("cloud_error",it)})
+                    cloud.start()
+                } catch(e:Exception) {
+                    runCatching { cloud?.finish() }
+                    cloud=null
+                    sendStatus("cloud_error","Online captions unavailable; WAV saved locally. "+(e.message ?: ""))
+                }
+            } else if (modelPath.isDirectory && File(modelPath,"am").isDirectory) {
                 try {
                     model=Model(modelPath.absolutePath)
                     recognizer=Recognizer(model,16000.0f).apply { setWords(true) }
                 } catch (_:Exception) { sendStatus("model_error","Recording works, but speech model failed to load") }
-            } else sendStatus("model_missing", "Recording works; import a Vosk model for transcription")
+            } else if(!online) sendStatus("model_missing", "Recording works; import a Vosk model for transcription")
             audio.startRecording()
             require(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone busy" }
             elapsedStart=SystemClock.elapsedRealtime()
@@ -125,6 +150,7 @@ class LectureRecorderService : Service() {
                 if (read <= 0) { if (!running) break; if (read < 0) error("Microphone read error: $read"); continue }
                 raf.write(buffer,0,read)
                 totalBytes+=read
+                cloud?.send(buffer,read)
                 val elapsedMs=totalBytes / 32L
                 if (elapsedMs-lastHeaderAt>=3000) {
                     WavFile.writeHeader(raf,totalBytes)
@@ -162,14 +188,18 @@ class LectureRecorderService : Service() {
                     persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
                 }
             }
+            cloud?.finish()
         } catch (e: Exception) {
             recordingError=e.message ?: "Recording failed"
         } finally {
             running=false
             runCatching { audio?.stopSafely(); audio?.release() }; capture=null
+            runCatching { cloud?.finish() }
             runCatching { recognizer?.close(); model?.close() }
             runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
-            runCatching { persistTranscriptAndNotes(id,session,totalBytes/32L,segments) }
+            runCatching { synchronized(segments) {
+                persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
+            } }
             if (recordingError != null) sendStatus("error",recordingError!!)
             else sendStatus("stopped")
             stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
