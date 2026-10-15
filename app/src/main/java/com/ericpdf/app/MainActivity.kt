@@ -62,7 +62,8 @@ class MainActivity:ComponentActivity() {
 }
 
 data class RecordingUiState(val event:String="idle",val docId:String?=null,
-    val sessionId:String?=null,val elapsedStart:Long=0L,val error:String="")
+    val sessionId:String?=null,val elapsedStart:Long=0L,val error:String="",
+    val partial:String="")
 
 @Composable
 private fun MainApp() {
@@ -96,7 +97,8 @@ private fun MainApp() {
                 recording=RecordingUiState(event,
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_DOC),
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
-                    intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "")
+                    intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
+                    intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "")
                 if (event=="model_error" || event=="model_missing" || event=="error") {
                     toast=recording.error
                 }

@@ -45,6 +45,14 @@ class LocalLibrary(private val context: Context) {
         require(sessionId.matches(Regex("[a-f0-9-]{36}")))
         return File(documentDirectory(docId), "audio/$sessionId.json")
     }
+    private fun generatedNotesFile(docId:String,sessionId:String):File {
+        require(sessionId.matches(Regex("[a-f0-9-]{36}")))
+        return File(documentDirectory(docId),"audio/$sessionId-live-notes.txt")
+    }
+    fun readGeneratedNotes(docId:String,sessionId:String):String =
+        runCatching { generatedNotesFile(docId,sessionId).readText() }.getOrDefault("")
+    fun saveGeneratedNotes(docId:String,sessionId:String,content:String) =
+        writeAtomic(generatedNotesFile(docId,sessionId),content)
     private fun cuesFile(docId: String, sessionId: String): File {
         require(sessionId.matches(Regex("[a-f0-9-]{36}")))
         return File(documentDirectory(docId), "audio/$sessionId-cues.json")
@@ -136,6 +144,7 @@ class LocalLibrary(private val context: Context) {
         recordingFile(docId, sessionId).delete()
         sessionFile(docId, sessionId).delete()
         cuesFile(docId, sessionId).delete()
+        generatedNotesFile(docId, sessionId).delete()
     }
     private fun readArray(file: File) = runCatching { JSONArray(file.readText()) }.getOrDefault(JSONArray())
     @Synchronized private fun writeAtomic(dest: File, contents: String) {

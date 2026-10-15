@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -73,6 +74,7 @@ fun ReaderScreen(
     var processing by remember { mutableStateOf(false) }
         var tab by remember { mutableIntStateOf(0) }
     val hasRecording=recording.docId==doc.id && recording.event !in setOf("idle","stopped","error")
+    LaunchedEffect(hasRecording) { if(hasRecording) tab=2 }
 
     LaunchedEffect(refreshKey,doc.id) {
         sessions=lib.sessions(doc.id)
@@ -339,7 +341,7 @@ private fun SidePanel(
                 modifier=Modifier.align(Alignment.CenterVertically))
         }
         TabRow(selectedTabIndex=tab) {
-            listOf("Page notes","Transcript","Bookmarks").forEachIndexed { index,label ->
+            listOf("Page notes","Transcript","Live notes","Bookmarks").forEachIndexed { index,label ->
                 Tab(selected=tab==index,onClick={onTab(index)},text={Text(label,maxLines=1,style=MaterialTheme.typography.labelSmall)})
             }
         }
@@ -443,6 +445,49 @@ private fun SidePanel(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+            2 -> {
+                // Show interim speech and persisted, automatically drafted notes.
+                val liveSession=if(hasRecording && recording.sessionId!=null)
+                    sessions.firstOrNull { it.id==recording.sessionId } ?: session
+                    else session
+                val written=remember(doc.id,liveSession?.id,liveSession?.segments?.size) {
+                    liveSession?.let { lib.readGeneratedNotes(doc.id,it.id) }.orEmpty()
+                }
+                Column(Modifier.fillMaxSize().padding(12.dp)) {
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Icon(Icons.Default.AutoAwesome,null,tint=Color(0xFF2167CE))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Live lecture notes",fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+                        if(hasRecording) Text("● LIVE",color=Color(0xFFD13C3C),
+                            style=MaterialTheme.typography.labelSmall)
+                    }
+                    Text("Offline speech notes • timestamped and linked to PDF pages",
+                        style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+                    Spacer(Modifier.height(8.dp))
+                    if(hasRecording) {
+                        Surface(color=Color(0xFFEAF1FF),shape=RoundedCornerShape(12.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                Text("PROFESSOR SPEAKING",fontWeight=FontWeight.Bold,
+                                    style=MaterialTheme.typography.labelSmall,color=Color(0xFF275798))
+                                Text(recording.partial.ifBlank {
+                                    if(hasModel) "Listening… live words will appear here."
+                                    else "Import an offline EN/DE Vosk model to enable live words."
+                                },style=MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if(written.isBlank()) {
+                        Text("Recognized phrases become notes automatically while recording. Use Page notes to add your own explanations.",
+                            style=MaterialTheme.typography.bodySmall,color=Color.Gray)
+                    } else {
+                        SelectionContainer {
+                            Text(written,modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                                style=MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }

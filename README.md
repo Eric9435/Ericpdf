@@ -13,7 +13,9 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Bookmarks | Local persistent per-PDF page bookmarks |
 | Notes | Autosaved typed note for every PDF page |
 | Lecture audio | Android foreground microphone service, 16kHz 16-bit mono WAV; recording persists across activity backgrounding while OS permits |
-| Live transcript | Optional Vosk on-device EN or DE small speech model, loaded from user-selected ZIP |
+| Live transcript | Interim offline Vosk text updates during speech; completed phrases are saved with timestamps |
+| Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp |
+| Background lecture mode | User starts foreground microphone service while app is visible; recording, transcription and note-writing can continue after switching apps, subject to Android system limits |
 | After-lecture transcript | Re-transcribe a saved WAV with the matching Vosk model |
 | Playback | Per-session WAV playback and seek to timestamp using transcript segments |
 | Annotation timeline | Audio timestamp and current PDF page cues persisted during page changes/ink events |
@@ -71,6 +73,7 @@ ericpdf/
     audio/{session-uuid}.wav     PCM microphone recording
     audio/{session-uuid}.json    transcript and timestamps
     audio/{session-uuid}-cues.json page/annotation timing markers
+    audio/{session-uuid}-live-notes.txt automatic lecture notes
   models/en/                    installed offline English model (optional)
   models/de/                    installed offline German model (optional)
 ```
@@ -105,3 +108,7 @@ Target repository is `Eric9435/Ericpdf`. At project creation time that repositor
 ## Licensing and dependencies
 
 This original project source is provided for customization. Third-party dependencies retain their own licenses: AndroidX/Jetpack, Vosk Android 0.3.47 (Apache 2.0), PDFBox-Android 2.0.27.0 (Apache 2.0). The speech models are user-supplied; check each selected model's license independently. No Flexcil code or assets are included.
+
+## Live notes transparency
+
+**Live notes** are timestamped recognized phrases associated with the current PDF page, not an AI-generated conceptual summary. Provisional recognition may change; only finalized phrases are saved. The offline model is needed for both transcription and automatic notes. Recording may continue with the screen locked after the user starts it while the app is visible, but system power restrictions or microphone contention may interrupt it. Android displays a persistent recording notification with a Stop control. Recording without a speech model still saves WAV audio only.

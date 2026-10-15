@@ -28,6 +28,7 @@ object AudioSignals {
     const val FIELD_DOC = "docId"
     const val FIELD_SESSION = "sessionId"
     const val FIELD_ELAPSED = "elapsedStart"
+    const val FIELD_PARTIAL = "partial"
 }
 
 /** Single mic capture pipeline: the same 16 kHz PCM is written to WAV and passed to Vosk. */
@@ -96,6 +97,8 @@ class LectureRecorderService : Service() {
         val segments=mutableListOf<TranscriptSegment>()
         var lastSegmentEnd=0L
         var recordingError: String? = null
+        var previousPartial=""
+        var lastPartialBroadcastAt=0L
         try {
             val min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             require(min > 0) { "16 kHz microphone capture not available" }
@@ -129,18 +132,35 @@ class LectureRecorderService : Service() {
                     lastHeaderAt=elapsedMs
                     sendStatus("recording")
                 }
-                if (recognizer?.acceptWaveForm(buffer,read) == true) {
-                    val seg=SpeechSegments.fromJson(recognizer.result,elapsedMs,lastSegmentEnd,page)
-                    if (seg != null) {
-                        lastSegmentEnd=seg.endMs; segments.add(seg)
-                        library.putSession(id,session.copy(durationMs=elapsedMs,segments=segments.toList()))
-                        sendStatus("transcript")
+                val rec=recognizer
+                if (rec != null) {
+                    if (rec.acceptWaveForm(buffer,read)) {
+                        previousPartial=""
+                        val seg=SpeechSegments.fromJson(rec.result,elapsedMs,lastSegmentEnd,page)
+                        if (seg != null) {
+                            lastSegmentEnd=seg.endMs; segments.add(seg)
+                            persistTranscriptAndNotes(id,session,elapsedMs,segments)
+                            sendStatus("transcript")
+                        } else sendStatus("partial",partial="")
+                    } else {
+                        val candidate=runCatching {
+                            JSONObject(rec.partialResult).optString("partial").trim()
+                        }.getOrDefault("")
+                        val now=SystemClock.elapsedRealtime()
+                        if (candidate!=previousPartial && now-lastPartialBroadcastAt>=350L) {
+                            previousPartial=candidate
+                            lastPartialBroadcastAt=now
+                            sendStatus("partial",partial=candidate.take(1000))
+                        }
                     }
                 }
             }
             recognizer?.let {
                 val last=SpeechSegments.fromJson(it.finalResult,totalBytes/32L,lastSegmentEnd,page)
-                if (last != null) segments.add(last)
+                if (last != null) {
+                    segments.add(last)
+                    persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
+                }
             }
         } catch (e: Exception) {
             recordingError=e.message ?: "Recording failed"
@@ -149,19 +169,26 @@ class LectureRecorderService : Service() {
             runCatching { audio?.stopSafely(); audio?.release() }; capture=null
             runCatching { recognizer?.close(); model?.close() }
             runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
-            runCatching { library.putSession(id,session.copy(durationMs=totalBytes/32L,segments=segments)) }
+            runCatching { persistTranscriptAndNotes(id,session,totalBytes/32L,segments) }
             if (recordingError != null) sendStatus("error",recordingError!!)
             else sendStatus("stopped")
             stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
         }
     }
+    private fun persistTranscriptAndNotes(
+        docId:String,session:LectureSession,durationMs:Long,segments:List<TranscriptSegment>
+    ) {
+        library.putSession(docId,session.copy(durationMs=durationMs,segments=segments.toList()))
+        library.saveGeneratedNotes(docId,session.id,LiveLectureNotes.fromSegments(segments))
+    }
     private fun AudioRecord.stopSafely() { runCatching { if (recordingState == AudioRecord.RECORDSTATE_RECORDING) stop() } }
-    private fun sendStatus(event: String, message: String="") {
+    private fun sendStatus(event: String, message: String="", partial:String="") {
         val broadcast=Intent(AudioSignals.EVENT).setPackage(packageName)
             .putExtra(AudioSignals.FIELD_EVENT,event)
             .putExtra(AudioSignals.FIELD_DOC,docId)
             .putExtra(AudioSignals.FIELD_SESSION,sessionId)
             .putExtra(AudioSignals.FIELD_ELAPSED,elapsedStart)
+            .putExtra(AudioSignals.FIELD_PARTIAL,partial)
             .putExtra("message",message)
         sendBroadcast(broadcast)
     }
