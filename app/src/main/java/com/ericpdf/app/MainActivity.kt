@@ -197,18 +197,22 @@ private fun MainApp() {
                 onDeleteSession={id->lib.deleteSession(item.id,id);refreshKey++},
                 onPage={ page ->
                     lib.update(item.copy(lastPage=page))
-                    if(recording.docId==item.id && recording.sessionId!=null) {
-                        val time=(SystemClock.elapsedRealtime()-recording.elapsedStart).coerceAtLeast(0)
-                        lib.addCue(item.id, recording.sessionId, AudioCue(time,page))
-                        context.startService(Intent(context,LectureRecorderService::class.java).apply {
-                            action=AudioSignals.PAGE;putExtra(AudioSignals.FIELD_DOC,item.id);putExtra("page",page)
-                        })
+                    if(recording.docId == item.id) {
+                        recording.sessionId?.let { currentSessionId ->
+                            val time=(SystemClock.elapsedRealtime()-recording.elapsedStart).coerceAtLeast(0)
+                            lib.addCue(item.id,currentSessionId,AudioCue(time,page))
+                            context.startService(Intent(context,LectureRecorderService::class.java).apply {
+                                action=AudioSignals.PAGE;putExtra(AudioSignals.FIELD_DOC,item.id);putExtra("page",page)
+                            })
+                        }
                     }
                 },
                 onStroke={ page ->
-                    if(recording.docId==item.id && recording.sessionId!=null && recording.elapsedStart>0) {
-                        lib.addCue(item.id,recording.sessionId,
-                            AudioCue((SystemClock.elapsedRealtime()-recording.elapsedStart).coerceAtLeast(0),page))
+                    if(recording.docId==item.id && recording.elapsedStart>0) {
+                        recording.sessionId?.let { currentSessionId ->
+                            lib.addCue(item.id,currentSessionId,
+                                AudioCue((SystemClock.elapsedRealtime()-recording.elapsedStart).coerceAtLeast(0),page))
+                        }
                     }
                 },
                 onRecordToggle={ currentPage ->

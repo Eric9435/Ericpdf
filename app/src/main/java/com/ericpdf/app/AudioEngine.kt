@@ -32,7 +32,7 @@ object AudioSignals {
 
 /** Single mic capture pipeline: the same 16 kHz PCM is written to WAV and passed to Vosk. */
 class LectureRecorderService : Service() {
-    private var running = false
+    @Volatile private var running = false
     private var capture: AudioRecord? = null
     private var worker: Thread? = null
     private var docId: String? = null
@@ -95,6 +95,7 @@ class LectureRecorderService : Service() {
         var totalBytes = 0L
         val segments=mutableListOf<TranscriptSegment>()
         var lastSegmentEnd=0L
+        var recordingError: String? = null
         try {
             val min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             require(min > 0) { "16 kHz microphone capture not available" }
@@ -142,14 +143,15 @@ class LectureRecorderService : Service() {
                 if (last != null) segments.add(last)
             }
         } catch (e: Exception) {
-            sendStatus("error",e.message ?: "Recording failed")
+            recordingError=e.message ?: "Recording failed"
         } finally {
             running=false
             runCatching { audio?.stopSafely(); audio?.release() }; capture=null
             runCatching { recognizer?.close(); model?.close() }
             runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
-            library.putSession(id, session.copy(durationMs=totalBytes/32L,segments=segments))
-            sendStatus("stopped")
+            runCatching { library.putSession(id,session.copy(durationMs=totalBytes/32L,segments=segments)) }
+            if (recordingError != null) sendStatus("error",recordingError!!)
+            else sendStatus("stopped")
             stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
         }
     }
