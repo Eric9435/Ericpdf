@@ -80,6 +80,9 @@ private fun MainApp() {
     var cloudEndpoint by rememberSaveable { mutableStateOf("") }
     var cloudCode by remember { mutableStateOf("") }
     var modelStatus by remember { mutableStateOf(0) }
+    var modelDownloading by remember { mutableStateOf<String?>(null) }
+    val hasOfflineModel=modelStatus.let { lib.modelDirectory(speechLanguage).isDirectory }
+
     var recording by remember { mutableStateOf(RecordingUiState()) }
     var importCourse by rememberSaveable { mutableStateOf("Unsorted") }
     var pendingDelete by remember { mutableStateOf<LibraryDoc?>(null) }
@@ -91,6 +94,27 @@ private fun MainApp() {
     var confirmRecording by remember { mutableStateOf(false) }
     var pendingMicPage by remember { mutableIntStateOf(0) }
     fun refresh() { docs=lib.list(); refreshKey++ }
+
+    suspend fun acquireOfflineModel(lang:String) {
+        if(modelDownloading!=null || lib.modelDirectory(lang).isDirectory) return
+        modelDownloading="Downloading ${lang.uppercase()} speech model…"
+        try {
+            val message=withContext(Dispatchers.IO) {
+                OfflineModelDownloader.download(context,lib,lang) { percent ->
+                    modelDownloading="Downloading ${lang.uppercase()} speech model: $percent%"
+                }
+            }
+            modelStatus++
+            toast=message
+        } catch(e:Exception) {
+            toast="Speech model download failed: ${e.message ?: "Check connection"}. Retry or import a ZIP."
+        } finally {modelDownloading=null}
+    }
+    LaunchedEffect(speechLanguage) {
+        if(!hasOfflineModel && OfflineModelDownloader.mayAutoDownload(context))
+            acquireOfflineModel(speechLanguage)
+    }
+
 
     DisposableEffect(context) {
         val receiver=object:BroadcastReceiver() {
@@ -225,7 +249,11 @@ private fun MainApp() {
             HomeScreen(docs=docs,busy=busy,language=speechLanguage,course=importCourse,
                 cloudMode=cloudMode,cloudEndpoint=cloudEndpoint,cloudCode=cloudCode,
                 onCloudMode={cloudMode=it;toast=""},onCloudEndpoint={cloudEndpoint=it},onCloudCode={cloudCode=it},
-                hasModel=lib.modelDirectory(speechLanguage).isDirectory,notice=toast,
+                hasModel=hasOfflineModel,notice=modelDownloading ?: toast,
+                onDownloadModel={
+                    val lang=speechLanguage
+                    scope.launch { acquireOfflineModel(lang) }
+                },
                 onLanguage={speechLanguage=it},onCourse={importCourse=it},
                 onOpen={activeId=it},onImport={pdfPicker.launch(arrayOf("application/pdf"))},
                 onModel={modelPicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
@@ -236,7 +264,7 @@ private fun MainApp() {
             val item=docs.firstOrNull { it.id==activeId }
             if(item==null) { LaunchedEffect(activeId) { activeId=null } }
             else ReaderScreen(doc=item,lib=lib,language=speechLanguage,cloudMode=cloudMode,
-                hasModel=lib.modelDirectory(speechLanguage).isDirectory,recording=recording,
+                hasModel=hasOfflineModel,recording=recording,
                 notice=toast,refreshKey=refreshKey,
                 onBack={activeId=null;refresh()},
                 onLanguage={speechLanguage=it},onMessage={toast=it},
@@ -331,7 +359,8 @@ private fun HomeScreen(
     cloudMode:Boolean,cloudEndpoint:String,cloudCode:String,
     onCloudMode:(Boolean)->Unit,onCloudEndpoint:(String)->Unit,onCloudCode:(String)->Unit,
     onLanguage:(String)->Unit,onCourse:(String)->Unit,onOpen:(String)->Unit,
-    onImport:()->Unit,onModel:()->Unit,onBackup:()->Unit,onRestore:()->Unit,
+    onImport:()->Unit,onModel:()->Unit,onDownloadModel:()->Unit,
+    onBackup:()->Unit,onRestore:()->Unit,
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -348,14 +377,22 @@ private fun HomeScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Button(onClick=onImport,enabled=!busy) {Icon(Icons.Default.UploadFile,null);Spacer(Modifier.width(8.dp));Text("Import PDF")}
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick=onImport,enabled=!busy) {
+                        Icon(Icons.Default.UploadFile,null)
+                        Spacer(Modifier.width(8.dp));Text("Import PDF")
+                    }
                     if(!cloudMode) {
+                        if(!hasModel) OutlinedButton(onClick=onDownloadModel,enabled=!busy,
+                            colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)) {
+                            Icon(Icons.Default.Download,null)
+                            Spacer(Modifier.width(6.dp));Text("Download ${language.uppercase()} speech")
+                        }
                         OutlinedButton(onClick=onModel,enabled=!busy,
                             colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)) {
-                            Icon(Icons.Default.Mic,null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Import offline model")
+                            Icon(Icons.Default.FolderOpen,null)
+                            Spacer(Modifier.width(6.dp));Text("Import model ZIP")
                         }
                     }
                 }

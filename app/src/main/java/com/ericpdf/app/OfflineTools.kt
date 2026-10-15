@@ -86,16 +86,18 @@ object PdfTools {
 }
 
 object OfflineModelImporter {
-    /** Accepts ZIP from official Vosk model download; no network permission is needed. */
-    fun import(context:Context, library:LocalLibrary, uri:Uri, language:String):String {
+    /** Manual ZIP import and verified automatic downloads use the same atomic installer. */
+    fun import(context:Context, library:LocalLibrary, uri:Uri, language:String):String =
+        context.contentResolver.openInputStream(uri)?.use { importZip(library,it,language) }
+            ?: error("Could not open ZIP")
+
+    fun importZip(library:LocalLibrary,input:InputStream,language:String):String {
         require(language in setOf("en","de"))
         val finalDir=library.modelDirectory(language)
         val parent=finalDir.parentFile!!
         val temp=File(parent,".${language}-import-${System.currentTimeMillis()}").apply { mkdirs() }
         try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                unzipSafely(input,temp)
-            } ?: error("Could not open ZIP")
+            unzipSafely(input,temp)
             val candidate=temp.walkTopDown().filter { it.isDirectory && File(it,"am").isDirectory && File(it,"conf").isDirectory }
                 .firstOrNull() ?: error("ZIP does not contain a Vosk model (am/conf folders missing)")
             // Validate the entire model before modifying the installed model.
@@ -139,6 +141,73 @@ object OfflineModelImporter {
                 zip.closeEntry()
             }
         }
+    }
+}
+
+/**
+ * Downloads only the official compact Vosk archives, after verifying their SHA-256.
+ * Models are stored in the app's private files, never bundled into a public APK.
+ * Auto-download requires an unmetered connection; manual download is opt-in.
+ */
+object OfflineModelDownloader {
+    private data class Source(val url:String,val sha256:String)
+    private val sources=mapOf(
+        "en" to Source("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+            "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"),
+        "de" to Source("https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip",
+            "b7e53c90b1f0a38456f4cd62b366ecd58803cd97cd42b06438e2c131713d5e43")
+    )
+    fun mayAutoDownload(context:Context):Boolean {
+        val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as android.net.ConnectivityManager
+        val network=manager.activeNetwork ?: return false
+        val caps=manager.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+    @Synchronized
+    fun download(context:Context,library:LocalLibrary,language:String,
+        progress:(Int)->Unit = {}):String {
+        val source=sources[language] ?: error("Unsupported language")
+        if(library.modelDirectory(language).isDirectory) return "Offline model already available"
+        val file=File.createTempFile("ericpdf-${language}-", ".zip",context.cacheDir)
+        try {
+            val conn=(java.net.URL(source.url).openConnection() as javax.net.ssl.HttpsURLConnection)
+            conn.connectTimeout=15000
+            conn.readTimeout=120000
+            conn.instanceFollowRedirects=true
+            try {
+                conn.connect()
+                require(conn.responseCode==200) { "Model server returned HTTP ${conn.responseCode}" }
+                val maxZip=90L*1024L*1024L
+                val expectedBytes=conn.contentLengthLong
+                require(expectedBytes in 1..maxZip) { "Unexpected model download size" }
+                val digest=java.security.MessageDigest.getInstance("SHA-256")
+                var count=0L
+                var lastPercent=-1
+                conn.inputStream.buffered().use { input ->
+                    file.outputStream().buffered().use { output ->
+                        val buffer=ByteArray(65536)
+                        while(true) {
+                            val n=input.read(buffer)
+                            if(n<0) break
+                            count+=n
+                            require(count<=maxZip) { "Model ZIP too large" }
+                            digest.update(buffer,0,n)
+                            output.write(buffer,0,n)
+                            val percent=(100*count/expectedBytes).toInt().coerceIn(0,100)
+                            if(percent/5!=lastPercent/5) {lastPercent=percent;progress(percent)}
+                        }
+                    }
+                }
+                require(count==expectedBytes) { "Incomplete model ZIP" }
+                val actual=digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                require(actual.equals(source.sha256,ignoreCase=true)) { "Model checksum mismatch" }
+            } finally {conn.disconnect()}
+            return file.inputStream().buffered().use {
+                OfflineModelImporter.importZip(library,it,language)
+            }
+        } finally {file.delete()}
     }
 }
 
