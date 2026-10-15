@@ -72,6 +72,10 @@ private fun MainApp() {
     val lib=remember { LocalLibrary(context.applicationContext) }
     val scope=rememberCoroutineScope()
     var docs by remember { mutableStateOf(lib.list()) }
+    var folders by remember { mutableStateOf(lib.folders()) }
+    var libraryFolderId by rememberSaveable {mutableStateOf<String?>(null)}
+    var librarySettings by rememberSaveable {mutableStateOf(false)}
+    var pendingImportFolder by remember {mutableStateOf<String?>(null)}
     var activeId by rememberSaveable { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -96,7 +100,10 @@ private fun MainApp() {
     var refreshKey by remember { mutableIntStateOf(0) }
     var confirmRecording by remember { mutableStateOf(false) }
     var pendingMicPage by remember { mutableIntStateOf(0) }
-    fun refresh() { docs=lib.list(); refreshKey++ }
+    fun refresh() { docs=lib.list();folders=lib.folders();refreshKey++ }
+    fun performLibraryChange(action:()->Unit) {
+        try {action();refresh()}catch(e:Exception){toast=e.message ?: "Could not update library"}
+    }
 
     suspend fun acquireOfflineModel(lang:String) {
         if(modelDownloading!=null || lib.modelDirectory(lang).isDirectory) return
@@ -147,7 +154,8 @@ private fun MainApp() {
             busy=true
             try {
                 val title=getDocumentName(context,uri)
-                val item=withContext(Dispatchers.IO) { lib.importPdf(uri,title,importCourse) }
+                val importParent=pendingImportFolder
+                val item=withContext(Dispatchers.IO) { lib.importPdf(uri,title,importCourse,importParent) }
                 refresh();activeId=item.id;toast="PDF imported to private device storage"
             } catch (e:Exception) { toast=e.message ?: "Import failed" }
             finally { busy=false }
@@ -263,7 +271,25 @@ private fun MainApp() {
 
     Column(Modifier.fillMaxSize().background(Mist)) {
         if (activeId==null) {
-            HomeScreen(docs=docs,busy=busy,language=speechLanguage,course=importCourse,
+            if(!librarySettings) {
+                FolderLibraryScreen(
+                    lib=lib,docs=docs,folders=folders,folderId=libraryFolderId,
+                    onFolderChange={libraryFolderId=it},notice=modelDownloading ?: toast,busy=busy,
+                    onOpen={activeId=it},onSettings={librarySettings=true},
+                    onImport={folder ->
+                        pendingImportFolder=folder
+                        pdfPicker.launch(arrayOf("application/pdf"))
+                    },
+                    onCreateFolder={name,parent ->performLibraryChange {lib.createFolder(name,parent)}},
+                    onRenameFolder={id,name ->performLibraryChange {lib.renameFolder(id,name)}},
+                    onMoveFolder={id,parent ->performLibraryChange {lib.moveFolder(id,parent)}},
+                    onDeleteFolder={id ->performLibraryChange {lib.deleteFolder(id)}},
+                    onMoveDoc={id,parent ->performLibraryChange {lib.moveDocument(id,parent)}},
+                    onRenameDoc={id,name ->performLibraryChange {lib.renameDocument(id,name)}},
+                    onDeleteDoc={pendingDelete=it},onDismissNotice={toast=""}
+                )
+            } else HomeScreen(docs=docs,busy=busy,language=speechLanguage,course=importCourse,
+                onLibrary={librarySettings=false},
                 cloudMode=cloudMode,cloudEndpoint=cloudEndpoint,cloudCode=cloudCode,
                 onCloudMode={cloudMode=it;toast=""},onCloudEndpoint={cloudEndpoint=it},onCloudCode={cloudCode=it},
                 hasModel=hasOfflineModel,notice=modelDownloading ?: toast,
@@ -272,7 +298,10 @@ private fun MainApp() {
                     scope.launch { acquireOfflineModel(lang) }
                 },
                 onLanguage={speechLanguage=it},onCourse={importCourse=it},
-                onOpen={activeId=it},onImport={pdfPicker.launch(arrayOf("application/pdf"))},
+                onOpen={activeId=it},onImport={
+                    pendingImportFolder=libraryFolderId
+                    pdfPicker.launch(arrayOf("application/pdf"))
+                },
                 onModel={modelPicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
                 onBackup={backupPicker.launch("EricPDF-backup-${System.currentTimeMillis()}.zip")},
                 onRestore={restorePicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
@@ -429,19 +458,25 @@ private fun HomeScreen(
     autoEnabled:Boolean,autoLastSuccess:Long,autoError:String,
     onSelectAutoFolder:()->Unit,onAutoBackupNow:()->Unit,onRestoreAutoLatest:()->Unit,
     onDisableAuto:()->Unit,
-    onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
+    onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit,onLibrary:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
+    val contactContext=LocalContext.current
     val onlineConfigured=cloudEndpoint.trim().startsWith("https://") && cloudEndpoint.trim().endsWith("/transcribe") && cloudCode.length>=24
     Column(Modifier.fillMaxSize()) {
         Surface(color=Navy) {
-            Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=22.dp)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=16.dp)) {
+                TextButton(onClick=onLibrary) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack,null,tint=Color.White)
+                    Text(" Back to documents",color=Color.White)
+                }
                 Row(verticalAlignment=Alignment.CenterVertically) {
                     Icon(Icons.Default.MenuBook,null,tint=Color.White,modifier=Modifier.size(32.dp))
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text("EricPDF",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=Color.White)
-                        Text("Your private lecture workspace",color=Color(0xFFBED0EE),style=MaterialTheme.typography.bodySmall)
+                        Text("Settings and backup · ${ericPdfVersion(LocalContext.current)}",
+                            color=Color(0xFFBED0EE),style=MaterialTheme.typography.bodySmall)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -582,46 +617,20 @@ private fun HomeScreen(
             OutlinedTextField(value=course,onValueChange=onCourse,modifier=Modifier.fillMaxWidth(),singleLine=true,
                 label={Text("Course label for next import (e.g. Control Systems)")})
             Spacer(Modifier.height(12.dp))
-            val filtered=docs.filter { it.title.contains(query,true) || it.course.contains(query,true) }
-            if(filtered.isEmpty()) {
-                Box(Modifier.fillMaxSize().padding(horizontal=8.dp),contentAlignment=Alignment.Center) {
-                    Column(horizontalAlignment=Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.PictureAsPdf,null,Modifier.size(52.dp),tint=Accent)
-                        Spacer(Modifier.height(10.dp))
-                        Text(if(docs.isEmpty()) "Your lecture library starts here" else "No matching documents",
-                            fontWeight=FontWeight.SemiBold)
-                        Text(
-                            if(docs.isEmpty()) "Start by importing a lecture PDF. Open it to see Live notes and begin recording."
-                            else "Try another title or course name.",
-                            textAlign=androidx.compose.ui.text.style.TextAlign.Center,
-                            style=MaterialTheme.typography.bodySmall
-                        )
-                        if(docs.isEmpty()) {
-                            Spacer(Modifier.height(12.dp))
-                            FilledTonalButton(onClick=onImport,enabled=!busy) {
-                                Icon(Icons.Default.UploadFile,null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Add my first PDF")
-                            }
-                        }
-                    }
-                }
-            } else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=32.dp)) {
-                items(filtered,key={it.id}) { doc ->
-                    Card(onClick={onOpen(doc.id)},shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=Color.White)) {
-                        Row(Modifier.fillMaxWidth().padding(14.dp),verticalAlignment=Alignment.CenterVertically) {
-                            Surface(color=Color(0xFFE9EDFF),shape=RoundedCornerShape(12.dp)) {
-                                Icon(Icons.Default.PictureAsPdf,null,tint=Accent,modifier=Modifier.padding(15.dp).size(26.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(doc.title,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
-                                Text("${doc.course} • ${doc.pageCount} pages",style=MaterialTheme.typography.bodySmall,color=Color.Gray)
-                                Text(DateFormat.getDateInstance().format(Date(doc.createdAt)),style=MaterialTheme.typography.labelSmall,color=Color.Gray)
-                            }
-                            IconButton(onClick={onDelete(doc)}) {Icon(Icons.Default.DeleteOutline,"Delete document",tint=Color.Gray)}
-                        }
-                    }
+            Card(colors=CardDefaults.cardColors(containerColor=Color.White),
+                shape=RoundedCornerShape(15.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                    Text("About EricPDF",fontWeight=FontWeight.Bold,
+                        style=MaterialTheme.typography.titleMedium)
+                    Text("Version ${ericPdfVersion(LocalContext.current)}")
+                    Text("Developed by innovateX",fontWeight=FontWeight.SemiBold)
+                    Text("Developer: Eric Scott @ Aung Phone Myat")
+                    TextButton(onClick={
+                        val mail=android.content.Intent(android.content.Intent.ACTION_SENDTO,
+                            android.net.Uri.parse("mailto:ericscott.de@gmail.com"))
+                        runCatching { contactContext.startActivity(mail) }
+                    }) { Text("ericscott.de@gmail.com") }
                 }
             }
         }
