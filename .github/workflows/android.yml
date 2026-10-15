@@ -1,0 +1,96 @@
+name: EricPDF Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Restore verified source files (first run only)
+        shell: bash
+        run: |
+          if [ ! -f transfer/part00.b64 ]; then
+            echo "Android sources already imported."
+            exit 0
+          fi
+          python -m pip install --disable-pip-version-check --quiet brotli
+          python - <<'PY'
+          import base64, hashlib, io, pathlib, shutil, tarfile, tempfile
+          import brotli
+          root = pathlib.Path.cwd()
+          chunks = sorted((root / 'transfer').glob('part*.b64'))
+          assert len(chunks) == 8, f'Expected 8 transfer parts, found {len(chunks)}'
+          encoded = ''.join(f.read_text(encoding='ascii').strip() for f in chunks)
+          assert len(encoded) == 31152, 'Invalid source transfer size'
+          compressed = base64.b64decode(encoded, validate=True)
+          expected = 'c4be760db35ec135f1a9aa1af61b5346a5074f539d9e4f92632beff425db3731'
+          assert hashlib.sha256(compressed).hexdigest() == expected, 'Source transfer checksum mismatch'
+          with tempfile.TemporaryDirectory() as tmpdir:
+              with tarfile.open(fileobj=io.BytesIO(brotli.decompress(compressed)), mode='r:') as archive:
+                  members = archive.getmembers()
+                  for member in members:
+                      posix = pathlib.PurePosixPath(member.name)
+                      assert posix.parts and posix.parts[0] == 'EricPDF'
+                      assert not member.issym() and not member.islnk()
+                      assert '..' not in posix.parts
+                  archive.extractall(tmpdir, filter='data')
+              source = pathlib.Path(tmpdir) / 'EricPDF'
+              files = [f for f in source.rglob('*') if f.is_file()]
+              assert len(files) >= 15, f'Unexpectedly few source files: {len(files)}'
+              for path in files:
+                  relative = path.relative_to(source)
+                  if relative.as_posix() == '.github/workflows/android.yml':
+                      continue
+                  target = root / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(path, target)
+          shutil.rmtree(root / 'transfer')
+          print('Imported all Android source files successfully.')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import verified EricPDF native Android source"
+            git push origin HEAD:main
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+
+      - name: Build APK and test
+        run: gradle :app:assembleDebug :app:testDebugUnitTest --stacktrace
+
+      - name: Upload installable APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EricPDF-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
