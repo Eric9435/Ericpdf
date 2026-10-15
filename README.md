@@ -116,3 +116,7 @@ This original project source is provided for customization. Third-party dependen
 ## Optional Online transcription (v0.3.0)
 
 Select **Online** from Library settings. This streams microphone audio over encrypted WSS to a speech provider via an ephemeral credential; PDFs, WAV recordings and transcript files remain in app-private storage. Requires a separately hosted authenticated token issuer in `cloud-session-server/`, an OpenAI API key stored only in the server's environment, and API billing. Enter its HTTPS `/session` URL and access code in the app. The access code is kept in runtime memory, not saved. Offline Vosk remains selectable. If the cloud connection fails, WAV recording continues locally without live cloud captions. Obtain lecturer permission before recording. Realtime transcripts may be inaccurate. See the separate server setup instructions and account usage limits.
+
+## Understanding the Home screen
+
+Use **Online** if you have deployed the optional token server. The app then displays a **Setup required** notice until both the HTTPS /session URL and access code have been entered. Entering them does not verify connectivity; recording initiates the connection. The Vosk **Import offline model** button is intentionally visible only in Offline mode. A ZIP import error concerning Vosk `am/conf` folders is an offline-only setup issue and not an online-server problem. Import a lecture PDF first before recording; the live notes panel is inside the document reader.

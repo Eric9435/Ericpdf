@@ -224,7 +224,7 @@ private fun MainApp() {
         if (activeId==null) {
             HomeScreen(docs=docs,busy=busy,language=speechLanguage,course=importCourse,
                 cloudMode=cloudMode,cloudEndpoint=cloudEndpoint,cloudCode=cloudCode,
-                onCloudMode={cloudMode=it},onCloudEndpoint={cloudEndpoint=it},onCloudCode={cloudCode=it},
+                onCloudMode={cloudMode=it;toast=""},onCloudEndpoint={cloudEndpoint=it},onCloudCode={cloudCode=it},
                 hasModel=lib.modelDirectory(speechLanguage).isDirectory,notice=toast,
                 onLanguage={speechLanguage=it},onCourse={importCourse=it},
                 onOpen={activeId=it},onImport={pdfPicker.launch(arrayOf("application/pdf"))},
@@ -335,6 +335,7 @@ private fun HomeScreen(
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
+    val onlineConfigured=cloudEndpoint.trim().startsWith("https://") && cloudCode.isNotBlank()
     Column(Modifier.fillMaxSize()) {
         Surface(color=Navy) {
             Column(Modifier.fillMaxWidth().padding(horizontal=20.dp, vertical=22.dp)) {
@@ -349,9 +350,13 @@ private fun HomeScreen(
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Button(onClick=onImport,enabled=!busy) {Icon(Icons.Default.UploadFile,null);Spacer(Modifier.width(8.dp));Text("Import PDF")}
-                    OutlinedButton(onClick=onModel,enabled=!busy,
-                        colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)) {
-                        Icon(Icons.Default.Mic,null);Spacer(Modifier.width(6.dp));Text("Speech model")
+                    if(!cloudMode) {
+                        OutlinedButton(onClick=onModel,enabled=!busy,
+                            colors=ButtonDefaults.outlinedButtonColors(contentColor=Color.White)) {
+                            Icon(Icons.Default.Mic,null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Import offline model")
+                        }
                     }
                 }
             }
@@ -392,12 +397,32 @@ private fun HomeScreen(
                 FilterChip(selected=cloudMode,onClick={onCloudMode(true)},label={Text("Online")})
                 FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("English ASR")})
                 FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("Deutsch ASR")})
-                Text(if(cloudMode) "Online speech" else if(hasModel) "Model ready" else "Model needed",style=MaterialTheme.typography.labelSmall,
-                    color=if(cloudMode||hasModel) Color(0xFF15794C) else Color(0xFFB26B00))
+                Text(
+                    if(cloudMode) (if(onlineConfigured) "Configured • not tested" else "Setup required")
+                    else if(hasModel) "Offline model ready" else "Offline model needed",
+                    style=MaterialTheme.typography.labelSmall,
+                    color=if((cloudMode && onlineConfigured)||(!cloudMode && hasModel))
+                        Color(0xFF15794C) else Color(0xFFB26B00)
+                )
             }
             if(cloudMode) {
-                Text("Online mode transmits lecture audio. ChatGPT Plus does not include API processing fees.",
-                    style=MaterialTheme.typography.labelSmall,color=Color(0xFF8B5730))
+                Surface(
+                    modifier=Modifier.fillMaxWidth(),
+                    color=if(onlineConfigured) Color(0xFFE7F5EB) else Color(0xFFFFF3E2),
+                    shape=RoundedCornerShape(12.dp)
+                ) {
+                    Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Text(if(onlineConfigured) "Online settings entered — not connected yet"
+                            else "Online transcription needs a server",
+                            style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
+                        Text(if(onlineConfigured)
+                            "The connection will be attempted after you open a PDF and tap Record."
+                            else "1. Deploy the EricPDF token server on Render.  2. Add your private OpenAI API key and access code to Render.  3. Enter its HTTPS /session URL and access code below.",
+                            style=MaterialTheme.typography.bodySmall)
+                        Text("Speech audio is sent online only while recording in Online mode. API usage may incur charges.",
+                            style=MaterialTheme.typography.labelSmall,color=Color(0xFF81542C))
+                    }
+                }
                 OutlinedTextField(value=cloudEndpoint,onValueChange=onCloudEndpoint,
                     modifier=Modifier.fillMaxWidth(),singleLine=true,
                     label={Text("HTTPS token-server URL ending in /session")})
@@ -411,13 +436,26 @@ private fun HomeScreen(
             Spacer(Modifier.height(12.dp))
             val filtered=docs.filter { it.title.contains(query,true) || it.course.contains(query,true) }
             if(filtered.isEmpty()) {
-                Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) {
+                Box(Modifier.fillMaxSize().padding(horizontal=8.dp),contentAlignment=Alignment.Center) {
                     Column(horizontalAlignment=Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.PictureAsPdf,null,Modifier.size(58.dp),tint=Accent)
+                        Icon(Icons.Default.PictureAsPdf,null,Modifier.size(52.dp),tint=Accent)
                         Spacer(Modifier.height(10.dp))
                         Text(if(docs.isEmpty()) "Your lecture library starts here" else "No matching documents",
                             fontWeight=FontWeight.SemiBold)
-                        Text("Import a PDF to read, annotate and record lectures",style=MaterialTheme.typography.bodySmall)
+                        Text(
+                            if(docs.isEmpty()) "Start by importing a lecture PDF. Open it to see Live notes and begin recording."
+                            else "Try another title or course name.",
+                            textAlign=androidx.compose.ui.text.style.TextAlign.Center,
+                            style=MaterialTheme.typography.bodySmall
+                        )
+                        if(docs.isEmpty()) {
+                            Spacer(Modifier.height(12.dp))
+                            FilledTonalButton(onClick=onImport,enabled=!busy) {
+                                Icon(Icons.Default.UploadFile,null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Add my first PDF")
+                            }
+                        }
                     }
                 }
             } else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=32.dp)) {
