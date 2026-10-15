@@ -158,13 +158,13 @@ class LocalLibrary(private val context: Context) {
         try {
             stream.write(contents.toByteArray(Charsets.UTF_8))
             atomic.finishWrite(stream)
-            // Trigger a coalesced snapshot. The worker waits before writing
-            // so every keystroke doesn't generate a full multi-GB ZIP.
-            AutoBackup.changed(context)
         } catch (e:Exception) {
             atomic.failWrite(stream)
             throw e
         }
+        // The local write is now successful. Background backup scheduling must
+        // never cause a saved note to be falsely reported as a failed write.
+        runCatching { AutoBackup.changed(context) }
     }
     private fun encodeDoc(d: LibraryDoc) = JSONObject().put("id",d.id).put("title",d.title)
         .put("course",d.course).put("createdAt",d.createdAt).put("pageCount",d.pageCount)
