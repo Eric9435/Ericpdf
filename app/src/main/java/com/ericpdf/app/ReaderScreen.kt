@@ -18,6 +18,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,115 +91,213 @@ fun ReaderScreen(
         zoom=1f
         onPage(page)
     }
-    Column(Modifier.fillMaxSize()) {
-        Surface(color=Color.White,tonalElevation=2.dp) {
-            Row(Modifier.fillMaxWidth().padding(horizontal=6.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                IconButton(onClick=onBack) {Icon(Icons.AutoMirrored.Filled.ArrowBack,"Library")}
-                Column(Modifier.weight(1f)) {
-                    Text(doc.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.Bold)
-                    Text("${doc.course}  ·  ${page+1} / ${doc.pageCount}",style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+
+    // Immersive document-first layout: the lecture tools never consume PDF height.
+    var chromeVisible by rememberSaveable(doc.id) { mutableStateOf(true) }
+    var deskOpen by rememberSaveable(doc.id) { mutableStateOf(false) }
+    var dockRight by rememberSaveable(doc.id) { mutableStateOf(true) }
+    var captionsVisible by rememberSaveable(doc.id) { mutableStateOf(true) }
+    var dockY by remember(doc.id) { mutableFloatStateOf(160f) }
+    var dragX by remember { mutableFloatStateOf(0f) }
+
+    val deskContent: @Composable (Modifier) -> Unit = { panelModifier ->
+        SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
+            language,onLanguage,tab,{tab=it},processing,
+            onRecordToggle={onRecordToggle(page)},
+            onRetranscribe={selected ->
+                scope.launch {
+                    processing=true
+                    try {
+                        val updated=withContext(Dispatchers.IO) { AudioTranscriber.transcribe(lib,doc.id,selected) }
+                        session=updated; sessions=lib.sessions(doc.id)
+                        onMessage("Offline transcription completed")
+                    } catch(e:Exception) { onMessage(e.message ?: "Transcription failed") }
+                    finally { processing=false }
                 }
-                IconButton(onClick={
-                    lib.setBookmark(doc.id,page,page !in bookmarks)
-                    bookmarks=lib.bookmarks(doc.id)
-                }) {Icon(if(page in bookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,"Bookmark", tint=if(page in bookmarks) Color(0xFFEB9A31) else Color.Gray)}
-                IconButton(onClick={showSearch=!showSearch}) {Icon(Icons.Default.Search,"Search PDF")}
-                IconButton(onClick=onExport) {Icon(Icons.Default.IosShare,"Export marked PDF")}
-            }
-        }
-        if(showSearch) {
-            Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically) {
-                OutlinedTextField(search,{search=it},Modifier.weight(1f),singleLine=true,placeholder={Text("Search PDF text")})
-                TextButton(onClick={
-                    scope.launch {
-                        searching=true
-                        try { foundPages=withContext(Dispatchers.IO){PdfTools.search(context,lib.sourceFile(doc.id),search)} }
-                        catch(e:Exception){onMessage(e.message ?: "PDF search failed")}
-                        finally { searching=false }
+            },
+            onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
+            onExportAudio=onExportAudio,onDeleteSession={session=null;onDeleteSession(it)},
+            onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
+            onSessionUpdate={updated ->lib.putSession(doc.id,updated);session=updated},
+            modifier=panelModifier)
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFE8EBF1))) {
+        val density=LocalDensity.current
+        val tabWidth=52.dp
+        val tabHeight=106.dp
+        val viewportWidth=with(density) {maxWidth.roundToPx()}
+        val viewportHeight=with(density) {maxHeight.roundToPx()}
+        val tabWidthPx=with(density) {tabWidth.roundToPx()}
+        val tabHeightPx=with(density) {tabHeight.roundToPx()}
+        val pullThreshold=with(density) {48.dp.toPx()}
+        Column(Modifier.fillMaxSize()) {
+            if(chromeVisible) {
+                Surface(color=Color.White,tonalElevation=2.dp) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal=3.dp),verticalAlignment=Alignment.CenterVertically) {
+                        IconButton(onClick=onBack) {Icon(Icons.AutoMirrored.Filled.ArrowBack,"Library")}
+                        Column(Modifier.weight(1f)) {
+                            Text(doc.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.Bold)
+                            Text("${doc.course} · ${page+1} / ${doc.pageCount}",
+                                style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+                        }
+                        IconButton(onClick={
+                            lib.setBookmark(doc.id,page,page !in bookmarks)
+                            bookmarks=lib.bookmarks(doc.id)
+                        }) { Icon(if(page in bookmarks) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            "Bookmark",tint=if(page in bookmarks) Color(0xFFEB9A31) else Color.Gray) }
+                        IconButton(onClick={showSearch=!showSearch}) {Icon(Icons.Default.Search,"Search PDF")}
+                        IconButton(onClick=onExport) {Icon(Icons.Default.IosShare,"Export marked PDF")}
+                        IconButton(onClick={chromeVisible=false}) {Icon(Icons.Default.Fullscreen,"Focus reading")}
                     }
-                },enabled=search.isNotBlank() && !searching) {Text("Find")}
-            }
-            if(searching) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if(foundPages.isNotEmpty()) {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal=12.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                    foundPages.forEach { n-> SuggestionChip(onClick={page=n},label={Text("Page ${n+1}")}) }
                 }
-            } else if (search.isNotBlank() && !searching) Text("Search matches appear here (text-layer PDFs only)",Modifier.padding(start=12.dp),style=MaterialTheme.typography.labelSmall)
-        }
-        if(notice.isNotBlank()) {
-            Text(notice,Modifier.fillMaxWidth().background(Color(0xFFE6EEFF)).padding(horizontal=14.dp,vertical=5.dp),
-                color=Color(0xFF224C93),style=MaterialTheme.typography.labelSmall,maxLines=2)
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=9.dp,vertical=4.dp),
-            verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
-            ToolChip("Read",Icons.Default.PanToolAlt,penTool==PenTool.READ){penTool=PenTool.READ}
-            ToolChip("Pen",Icons.Default.Edit,penTool==PenTool.PEN){penTool=PenTool.PEN}
-            ToolChip("Highlight",Icons.Default.BorderColor,penTool==PenTool.HIGHLIGHT){penTool=PenTool.HIGHLIGHT}
-            ToolChip("Erase",Icons.Default.AutoFixOff,penTool==PenTool.ERASE){penTool=PenTool.ERASE}
-            if(penTool==PenTool.PEN) {
-                ColorChoice(color==InkBlue,Color(InkBlue)){color=InkBlue}
-                ColorChoice(color==InkRed,Color(InkRed)){color=InkRed}
-            }
-            IconButton(onClick={ if(strokes.isNotEmpty()) {strokes=strokes.dropLast(1);lib.saveInk(doc.id,page,strokes)} },enabled=strokes.isNotEmpty()) {
-                Icon(Icons.Default.Undo,"Undo last stroke")
-            }
-            Text("${(zoom*100).toInt()}%",style=MaterialTheme.typography.labelSmall)
-            IconButton(onClick={zoom=(zoom-0.25f).coerceIn(1f,3f)}) {Icon(Icons.Default.Remove,"Zoom out")}
-            IconButton(onClick={zoom=(zoom+0.25f).coerceIn(1f,3f)}) {Icon(Icons.Default.Add,"Zoom in")}
-        }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val wide=maxWidth>=800.dp
-            if(wide) Row(Modifier.fillMaxSize()) {
-                Column(Modifier.weight(1f)) {
-                    ReaderPage(doc,lib,page,penTool,color,zoom,strokes,onZoom={zoom=it},onInk={
-                        strokes=it;lib.saveInk(doc.id,page,it);onStroke(page)
-                    },modifier=Modifier.weight(1f))
-                    PageBar(page,doc.pageCount,onPrev={page--},onNext={page++},onJump={showJump=true})
+                if(showSearch) {
+                    Row(Modifier.fillMaxWidth().padding(6.dp),verticalAlignment=Alignment.CenterVertically) {
+                        OutlinedTextField(search,{search=it},Modifier.weight(1f),singleLine=true,
+                            placeholder={Text("Search PDF text")})
+                        TextButton(onClick={
+                            scope.launch {
+                                searching=true
+                                try {foundPages=withContext(Dispatchers.IO){
+                                    PdfTools.search(context,lib.sourceFile(doc.id),search)
+                                }} catch(e:Exception) {onMessage(e.message ?: "PDF search failed")}
+                                finally {searching=false}
+                            }
+                        },enabled=search.isNotBlank() && !searching) {Text("Find")}
+                    }
+                    if(searching) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal=8.dp)) {
+                        foundPages.forEach { n -> SuggestionChip(onClick={page=n},label={Text("Page ${n+1}")}) }
+                    }
                 }
-                VerticalDivider()
-                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
-                    language,onLanguage,tab,{tab=it},processing,
-                    onRecordToggle={onRecordToggle(page)},
-                    onRetranscribe={ selected ->
-                        scope.launch {
-                            processing=true
-                            try {
-                                val updated=withContext(Dispatchers.IO){AudioTranscriber.transcribe(lib,doc.id,selected)}
-                                session=updated;sessions=lib.sessions(doc.id);onMessage("Offline transcription completed")
-                            } catch(e:Exception){onMessage(e.message ?: "Transcription failed")}
-                            finally {processing=false}
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(Color.White)
+                    .padding(horizontal=8.dp,vertical=2.dp),
+                    verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                    ToolChip("Read",Icons.Default.PanToolAlt,penTool==PenTool.READ) {penTool=PenTool.READ}
+                    ToolChip("Pen",Icons.Default.Edit,penTool==PenTool.PEN) {penTool=PenTool.PEN}
+                    ToolChip("Highlight",Icons.Default.BorderColor,penTool==PenTool.HIGHLIGHT) {penTool=PenTool.HIGHLIGHT}
+                    ToolChip("Erase",Icons.Default.AutoFixOff,penTool==PenTool.ERASE) {penTool=PenTool.ERASE}
+                    if(penTool==PenTool.PEN) {
+                        ColorChoice(color==InkBlue,Color(InkBlue)) {color=InkBlue}
+                        ColorChoice(color==InkRed,Color(InkRed)) {color=InkRed}
+                    }
+                    IconButton(onClick={
+                        if(strokes.isNotEmpty()) {strokes=strokes.dropLast(1);lib.saveInk(doc.id,page,strokes)}
+                    },enabled=strokes.isNotEmpty()) { Icon(Icons.Default.Undo,"Undo last stroke") }
+                    Text("${(zoom*100).toInt()}%",style=MaterialTheme.typography.labelSmall)
+                    IconButton(onClick={zoom=(zoom-0.25f).coerceIn(1f,3f)}) {Icon(Icons.Default.Remove,"Zoom out")}
+                    IconButton(onClick={zoom=(zoom+0.25f).coerceIn(1f,3f)}) {Icon(Icons.Default.Add,"Zoom in")}
+                    IconButton(onClick={captionsVisible=!captionsVisible}) {
+                        Icon(if(captionsVisible) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                            if(captionsVisible) "Hide captions" else "Show captions")
+                    }
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                ReaderPage(doc,lib,page,penTool,color,zoom,strokes,
+                    onZoom={zoom=it},
+                    onInk={strokes=it;lib.saveInk(doc.id,page,it);onStroke(page)},
+                    modifier=Modifier.fillMaxSize())
+                Box(Modifier.align(Alignment.BottomCenter).padding(bottom=10.dp)) {
+                    PageBar(page,doc.pageCount,onPrev={if(page>0) page--},
+                        onNext={if(page<doc.pageCount-1) page++},onJump={showJump=true})
+                }
+                if(hasRecording && captionsVisible) {
+                    val lastFinal=sessions.firstOrNull {it.id==recording.sessionId}
+                        ?.segments?.lastOrNull()?.text.orEmpty()
+                    val caption=recording.partial.ifBlank {lastFinal.ifBlank {"Listening to lecture…"}}
+                    Surface(
+                        modifier=Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.90f)
+                            .padding(bottom=70.dp),
+                        color=Color(0xE91A2535),shape=RoundedCornerShape(15.dp),shadowElevation=6.dp
+                    ) {
+                        Column(Modifier.padding(horizontal=14.dp,vertical=9.dp),
+                            horizontalAlignment=Alignment.CenterHorizontally) {
+                            Text("● LIVE CAPTIONS",color=Color(0xFFB5D1FF),
+                                style=MaterialTheme.typography.labelSmall,fontWeight=FontWeight.Bold)
+                            Text(caption,color=Color.White,maxLines=3,overflow=TextOverflow.Ellipsis,
+                                textAlign=TextAlign.Center,style=MaterialTheme.typography.bodyLarge)
                         }
-                    },onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
-                    onExportAudio=onExportAudio,onDeleteSession={session= null; onDeleteSession(it)},
-                    onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
-                    onSessionUpdate={ updated ->lib.putSession(doc.id,updated);session=updated },
-                    modifier=Modifier.width(340.dp))
-            } else Column(Modifier.fillMaxSize()) {
-                ReaderPage(doc,lib,page,penTool,color,zoom,strokes,onZoom={zoom=it},onInk={
-                    strokes=it;lib.saveInk(doc.id,page,it);onStroke(page)
-                },modifier=Modifier.weight(0.62f))
-                PageBar(page,doc.pageCount,onPrev={page--},onNext={page++},onJump={showJump=true})
-                HorizontalDivider()
-                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
-                    language,onLanguage,tab,{tab=it},processing,
-                    onRecordToggle={onRecordToggle(page)},
-                    onRetranscribe={selected ->
-                        scope.launch {
-                            processing=true
-                            try {
-                                val updated=withContext(Dispatchers.IO){AudioTranscriber.transcribe(lib,doc.id,selected)}
-                                session=updated;sessions=lib.sessions(doc.id);onMessage("Offline transcription completed")
-                            } catch(e:Exception){onMessage(e.message ?: "Transcription failed")}
-                            finally {processing=false}
+                    }
+                }
+            }
+        }
+        if(!chromeVisible) {
+            FilledTonalIconButton(onClick={chromeVisible=true},
+                modifier=Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                Icon(Icons.Default.FullscreenExit,"Show reader toolbar")
+            }
+        }
+        if(!deskOpen) {
+            Box(
+                Modifier.align(Alignment.TopStart)
+                    .offset {IntOffset(
+                        ((if(dockRight) viewportWidth-tabWidthPx else 0)+dragX.roundToInt())
+                            .coerceIn(0,(viewportWidth-tabWidthPx).coerceAtLeast(0)),
+                        dockY.roundToInt().coerceIn(0,(viewportHeight-tabHeightPx).coerceAtLeast(0)))}
+                    .width(tabWidth).height(tabHeight)
+                    .pointerInput(dockRight,viewportWidth,viewportHeight) {
+                        detectDragGestures(
+                            onDragStart={dragX=0f},
+                            onDragEnd={
+                                // Long horizontal drags cross the page and snap to the opposite edge.
+                                // Short inward drags pull the drawer open; release near an edge snaps shut.
+                                if(kotlin.math.abs(dragX)>viewportWidth*0.42f) dockRight=!dockRight
+                                else if((dockRight && dragX < -pullThreshold) ||
+                                    (!dockRight && dragX > pullThreshold)) deskOpen=true
+                                dragX=0f
+                            },
+                            onDragCancel={dragX=0f}
+                        ) {change,amount ->
+                            change.consume()
+                            dragX+=amount.x
+                            dockY=(dockY+amount.y).coerceIn(0f,
+                                (viewportHeight-tabHeightPx).coerceAtLeast(0).toFloat())
                         }
-                    },onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
-                    onExportAudio=onExportAudio,onDeleteSession={session=null;onDeleteSession(it)},
-                    onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
-                    onSessionUpdate={updated->lib.putSession(doc.id,updated);session=updated},
-                    modifier=Modifier.weight(0.38f))
+                    }
+            ) {
+                Surface(onClick={deskOpen=true},shape=RoundedCornerShape(
+                    if(dockRight) 16.dp else 3.dp,if(dockRight) 3.dp else 16.dp,
+                    if(dockRight) 3.dp else 16.dp,if(dockRight) 16.dp else 3.dp),
+                    color=Color(0xFF234F98),shadowElevation=8.dp,
+                    modifier=Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,
+                        verticalArrangement=Arrangement.Center) {
+                        Icon(if(hasRecording) Icons.Default.GraphicEq else Icons.Default.MenuBook,
+                            "Open Lecture Desk",tint=Color.White)
+                        Spacer(Modifier.height(4.dp))
+                        Text("DESK",color=Color.White,fontSize=10.sp,fontWeight=FontWeight.Bold)
+                        Icon(if(dockRight) Icons.AutoMirrored.Filled.ArrowBack
+                            else Icons.AutoMirrored.Filled.ArrowForward,null,
+                            tint=Color.White,modifier=Modifier.size(17.dp))
+                    }
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxSize().background(Color(0x38000000))
+                .clickable {deskOpen=false})
+            val panelWidth=minOf(380.dp,maxWidth-24.dp)
+            val panelHeight=minOf(690.dp,maxHeight-32.dp)
+            Surface(modifier=Modifier.align(if(dockRight) Alignment.CenterEnd else Alignment.CenterStart)
+                .padding(horizontal=10.dp).width(panelWidth).height(panelHeight),
+                shape=RoundedCornerShape(20.dp),shadowElevation=16.dp,color=Color.White) {
+                Column {
+                    Row(Modifier.fillMaxWidth().height(36.dp).background(Color(0xFFF5F7FB)),
+                        verticalAlignment=Alignment.CenterVertically,
+                        horizontalArrangement=Arrangement.End) {
+                        Text("Drag tab inward to reopen · tap X to dock",
+                            style=MaterialTheme.typography.labelSmall,color=Color.Gray,
+                            modifier=Modifier.weight(1f).padding(start=12.dp),maxLines=1)
+                        IconButton(onClick={deskOpen=false},modifier=Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Close,"Dock Lecture Desk",modifier=Modifier.size(20.dp))
+                        }
+                    }
+                    deskContent(Modifier.fillMaxSize())
+                }
             }
         }
     }
+
     if(showJump) AlertDialog(onDismissRequest={showJump=false},title={Text("Go to page")},
         text={OutlinedTextField(targetPage,{targetPage=it.filter(Char::isDigit).take(6)},
             label={Text("Page 1–${doc.pageCount}")},singleLine=true)},
@@ -214,8 +317,9 @@ private fun ColorChoice(selected:Boolean,color:Color,onClick:()->Unit) {
 }
 @Composable
 private fun PageBar(page:Int,count:Int,onPrev:()->Unit,onNext:()->Unit,onJump:()->Unit) {
-    Surface(color=Color.White) {
-        Row(Modifier.fillMaxWidth().height(49.dp),horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically) {
+    Surface(color=Color.White.copy(alpha=0.96f),shape=RoundedCornerShape(50),shadowElevation=5.dp) {
+        Row(Modifier.height(44.dp).padding(horizontal=8.dp),
+            horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically) {
             IconButton(onClick=onPrev,enabled=page>0) {Icon(Icons.AutoMirrored.Filled.ArrowBack,"Previous page")}
             TextButton(onClick=onJump) {Text("${page+1} / $count",fontWeight=FontWeight.Bold)}
             IconButton(onClick=onNext,enabled=page<count-1) {Icon(Icons.AutoMirrored.Filled.ArrowForward,"Next page")}
@@ -235,8 +339,17 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
         catch(e:Exception){error=e.message ?: "Page could not be rendered"}
     }
     DisposableEffect(bitmap) { val toDispose=bitmap; onDispose {toDispose?.recycle()} }
-    Box(modifier.background(Color(0xFFE8EBF1)).verticalScroll(rememberScrollState()).padding(12.dp),contentAlignment=Alignment.TopCenter) {
+    BoxWithConstraints(modifier.background(Color(0xFFE8EBF1))) {
         val b=bitmap
+        val aspect=if(b!=null) b.width.toFloat()/b.height.toFloat() else 0.72f
+        val usableWidth=(maxWidth-16.dp).coerceAtLeast(80.dp)
+        val usableHeight=(maxHeight-16.dp).coerceAtLeast(80.dp)
+        // Fit the ENTIRE PDF page into the available screen at 100%,
+        // then enlarge the actual layout during zoom so it can be panned.
+        val fitWidth=minOf(usableWidth,usableHeight*aspect)
+        Box(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState()).padding(8.dp),
+            contentAlignment=Alignment.TopCenter) {
         if(b==null) {
             Box(Modifier.fillMaxWidth().height(320.dp),contentAlignment=Alignment.Center) {
                 if(error==null) CircularProgressIndicator() else Text(error ?: "Unknown error")
@@ -275,8 +388,8 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
                     } else draft=draft?.copy(points=draft!!.points+pt)
                 }
             }
-            Box(Modifier.fillMaxWidth().graphicsLayer(scaleX=zoom,scaleY=zoom,transformOrigin=androidx.compose.ui.graphics.TransformOrigin(0.5f,0f))
-                .aspectRatio(b.width.toFloat()/b.height.toFloat()).background(Color.White)
+            Box(Modifier.width(fitWidth*zoom)
+                .aspectRatio(aspect).background(Color.White)
                 .then(inkModifier).onSizeChanged { pageSize=it }) {
                 Image(bitmap=b.asImageBitmap(),contentDescription="PDF page ${page+1}",modifier=Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
                 Canvas(Modifier.fillMaxSize()) {
@@ -294,6 +407,7 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
                     strokes.forEach(::drawInk);draft?.let(::drawInk)
                 }
             }
+        }
         }
     }
 }
