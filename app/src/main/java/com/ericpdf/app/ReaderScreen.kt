@@ -52,7 +52,8 @@ private enum class PenTool { READ, PEN, HIGHLIGHT, ERASE }
 fun ReaderScreen(
     doc:LibraryDoc,lib:LocalLibrary,language:String,hasModel:Boolean,recording:RecordingUiState,
     notice:String,refreshKey:Int,onBack:()->Unit,onLanguage:(String)->Unit,onMessage:(String)->Unit,
-    onExport:()->Unit,onExportText:(String)->Unit,onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,
+    onExport:()->Unit,onExportText:(String)->Unit,onExportLiveNotes:(String)->Unit,
+    onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,
     onPage:(Int)->Unit,onStroke:(Int)->Unit,onRecordToggle:(Int)->Unit
 ) {
     val scope=rememberCoroutineScope()
@@ -163,7 +164,8 @@ fun ReaderScreen(
                             } catch(e:Exception){onMessage(e.message ?: "Transcription failed")}
                             finally {processing=false}
                         }
-                    },onExportText=onExportText,onExportAudio=onExportAudio,onDeleteSession={session= null; onDeleteSession(it)},
+                    },onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
+                    onExportAudio=onExportAudio,onDeleteSession={session= null; onDeleteSession(it)},
                     onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
                     onSessionUpdate={ updated ->lib.putSession(doc.id,updated);session=updated },
                     modifier=Modifier.width(340.dp))
@@ -185,7 +187,8 @@ fun ReaderScreen(
                             } catch(e:Exception){onMessage(e.message ?: "Transcription failed")}
                             finally {processing=false}
                         }
-                    },onExportText=onExportText,onExportAudio=onExportAudio,onDeleteSession={session=null;onDeleteSession(it)},
+                    },onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
+                    onExportAudio=onExportAudio,onDeleteSession={session=null;onDeleteSession(it)},
                     onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
                     onSessionUpdate={updated->lib.putSession(doc.id,updated);session=updated},
                     modifier=Modifier.weight(0.38f))
@@ -309,6 +312,7 @@ private fun SidePanel(
     hasModel:Boolean,language:String,onLanguage:(String)->Unit,
     tab:Int,onTab:(Int)->Unit,processing:Boolean,
     onRecordToggle:()->Unit,onRetranscribe:(LectureSession)->Unit,onExportText:(String)->Unit,
+    onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,onSeekPage:(Int)->Unit,
     onSessionUpdate:(LectureSession)->Unit,modifier:Modifier=Modifier
 ) {
@@ -464,6 +468,10 @@ private fun SidePanel(
                         Text("Live lecture notes",fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
                         if(hasRecording) Text("● LIVE",color=Color(0xFFD13C3C),
                             style=MaterialTheme.typography.labelSmall)
+                        if(liveSession!=null) IconButton(onClick={onExportLiveNotes(liveSession.id)},
+                            enabled=written.isNotBlank()) {
+                            Icon(Icons.Default.SaveAlt,"Export live notes to TXT")
+                        }
                     }
                     Text("Offline speech notes • timestamped and linked to PDF pages",
                         style=MaterialTheme.typography.labelSmall,color=Color.Gray)
@@ -471,7 +479,7 @@ private fun SidePanel(
                     if(hasRecording) {
                         Surface(color=Color(0xFFEAF1FF),shape=RoundedCornerShape(12.dp)) {
                             Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                                Text("PROFESSOR SPEAKING",fontWeight=FontWeight.Bold,
+                                Text("LIVE RECOGNITION",fontWeight=FontWeight.Bold,
                                     style=MaterialTheme.typography.labelSmall,color=Color(0xFF275798))
                                 Text(recording.partial.ifBlank {
                                     if(hasModel) "Listening… live words will appear here."

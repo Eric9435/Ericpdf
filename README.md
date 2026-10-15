@@ -14,7 +14,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Notes | Autosaved typed note for every PDF page |
 | Lecture audio | Android foreground microphone service, 16kHz 16-bit mono WAV; recording persists across activity backgrounding while OS permits |
 | Live transcript | Interim offline Vosk text updates during speech; completed phrases are saved with timestamps |
-| Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp |
+| Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp; export the notes as TXT |
 | Background lecture mode | User starts foreground microphone service while app is visible; recording, transcription and note-writing can continue after switching apps, subject to Android system limits |
 | After-lecture transcript | Re-transcribe a saved WAV with the matching Vosk model |
 | Playback | Per-session WAV playback and seek to timestamp using transcript segments |

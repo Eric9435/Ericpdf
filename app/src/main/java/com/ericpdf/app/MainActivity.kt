@@ -81,6 +81,7 @@ private fun MainApp() {
     var pendingDelete by remember { mutableStateOf<LibraryDoc?>(null) }
     var exportId by remember { mutableStateOf<String?>(null) }
     var transcriptExport by remember { mutableStateOf<Pair<String,String>?>(null) }
+    var liveNotesExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var audioExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var confirmRecording by remember { mutableStateOf(false) }
@@ -153,6 +154,20 @@ private fun MainApp() {
             } catch(e:Exception){toast=e.message ?: "Transcript export failed"}
         }
     }
+    val notesPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val request=liveNotesExport; liveNotesExport=null
+        if(uri!=null && request!=null) scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val notes=lib.readGeneratedNotes(request.first,request.second)
+                    require(notes.isNotBlank()) { "No finalized speech notes to export" }
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(notes) }
+                        ?: error("Export destination unavailable")
+                }
+                toast="Lecture notes exported"
+            } catch(e:Exception) { toast=e.message ?: "Notes export failed" }
+        }
+    }
     val wavPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
         val request=audioExport; audioExport=null
         if(uri!=null && request!=null) scope.launch {
@@ -219,6 +234,10 @@ private fun MainApp() {
                 onLanguage={speechLanguage=it},onMessage={toast=it},
                 onExport={exportId=item.id;exportPicker.launch(item.title.substringBeforeLast('.')+"-annotated.pdf")},
                 onExportText={sessionId -> transcriptExport=item.id to sessionId; textPicker.launch("${item.title}-${sessionId.take(8)}.txt")},
+                onExportLiveNotes={sessionId ->
+                    liveNotesExport=item.id to sessionId
+                    notesPicker.launch("${item.title}-lecture-notes-${sessionId.take(8)}.txt")
+                },
                 onExportAudio={sessionId -> audioExport=item.id to sessionId; wavPicker.launch("${item.title}-${sessionId.take(8)}.wav")},
                 onDeleteSession={id->lib.deleteSession(item.id,id);refreshKey++},
                 onPage={ page ->
