@@ -64,8 +64,10 @@ object AutoBackup {
         require(folder!=null && folder.isDirectory && folder.canWrite()) {
             "Choose a writable Documents folder"
         }
+        // Status always belongs to this selected folder; never carry over an
+        // old folder's last-success timestamp and imply the new folder is safe.
         prefs(ctx).edit().putString(TREE,uri.toString())
-            .remove(LAST_FAILURE).apply()
+            .remove(LAST_FAILURE).remove(LAST_SUCCESS).apply()
         WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(
             PERIODIC,ExistingPeriodicWorkPolicy.UPDATE,
             PeriodicWorkRequestBuilder<AutoBackupWorker>(6,TimeUnit.HOURS)
