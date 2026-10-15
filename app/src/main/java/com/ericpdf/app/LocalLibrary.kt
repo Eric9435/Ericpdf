@@ -82,7 +82,10 @@ class LocalLibrary(private val context: Context) {
     }.sortedByDescending { it.createdAt }
     fun get(id: String): LibraryDoc = decodeDoc(JSONObject(manifest(id).readText()))
     fun update(doc: LibraryDoc) = writeAtomic(manifest(doc.id), encodeDoc(doc).toString())
-    fun delete(id: String) { documentDirectory(id).deleteRecursively() }
+    fun delete(id: String) {
+        documentDirectory(id).deleteRecursively()
+        AutoBackup.changed(context,now=true)
+    }
 
     fun readInk(id: String, page: Int): List<InkStroke> = readArray(inkFile(id, page)).let { arr ->
         (0 until arr.length()).mapNotNull { i -> runCatching {
@@ -145,6 +148,7 @@ class LocalLibrary(private val context: Context) {
         sessionFile(docId, sessionId).delete()
         cuesFile(docId, sessionId).delete()
         generatedNotesFile(docId, sessionId).delete()
+        AutoBackup.changed(context,now=true)
     }
     private fun readArray(file: File) = runCatching { JSONArray(file.readText()) }.getOrDefault(JSONArray())
     @Synchronized private fun writeAtomic(dest: File, contents: String) {
@@ -154,6 +158,9 @@ class LocalLibrary(private val context: Context) {
         try {
             stream.write(contents.toByteArray(Charsets.UTF_8))
             atomic.finishWrite(stream)
+            // Trigger a coalesced snapshot. The worker waits before writing
+            // so every keystroke doesn't generate a full multi-GB ZIP.
+            AutoBackup.changed(context)
         } catch (e:Exception) {
             atomic.failWrite(stream)
             throw e

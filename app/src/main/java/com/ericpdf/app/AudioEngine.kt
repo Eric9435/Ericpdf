@@ -142,6 +142,7 @@ class LectureRecorderService : Service() {
             audio.startRecording()
             require(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone busy" }
             elapsedStart=SystemClock.elapsedRealtime()
+            AutoBackup.recording(applicationContext,true)
             sendStatus("recording")
             val buffer=ByteArray(4096)
             var lastHeaderAt=0L
@@ -156,6 +157,7 @@ class LectureRecorderService : Service() {
                     WavFile.writeHeader(raf,totalBytes)
                     raf.seek(44L+totalBytes)
                     lastHeaderAt=elapsedMs
+                    AutoBackup.heartbeat(applicationContext)
                     sendStatus("recording")
                 }
                 val rec=recognizer
@@ -200,6 +202,9 @@ class LectureRecorderService : Service() {
             runCatching { synchronized(segments) {
                 persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
             } }
+            // Write the finalized WAV header before scheduling backup.
+            // Any pending WorkManager retry can now include the full recording.
+            AutoBackup.recording(applicationContext,false)
             if (recordingError != null) sendStatus("error",recordingError!!)
             else sendStatus("stopped")
             stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
