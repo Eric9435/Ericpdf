@@ -1,0 +1,197 @@
+package com.ericpdf.app
+
+import android.app.*
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.Build
+import android.os.IBinder
+import android.os.SystemClock
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import java.io.File
+import java.io.RandomAccessFile
+import java.util.UUID
+import kotlin.concurrent.thread
+import kotlin.math.max
+
+object AudioSignals {
+    const val EVENT = "com.ericpdf.app.AUDIO_EVENT"
+    const val START = "com.ericpdf.app.START_AUDIO"
+    const val STOP = "com.ericpdf.app.STOP_AUDIO"
+    const val STATUS = "com.ericpdf.app.STATUS_AUDIO"
+    const val PAGE = "com.ericpdf.app.PAGE_AUDIO"
+    const val FIELD_EVENT = "event"
+    const val FIELD_DOC = "docId"
+    const val FIELD_SESSION = "sessionId"
+    const val FIELD_ELAPSED = "elapsedStart"
+}
+
+/** Single mic capture pipeline: the same 16 kHz PCM is written to WAV and passed to Vosk. */
+class LectureRecorderService : Service() {
+    private var running = false
+    private var capture: AudioRecord? = null
+    private var worker: Thread? = null
+    private var docId: String? = null
+    private var sessionId: String? = null
+    private var elapsedStart: Long = 0
+    @Volatile private var page = 0
+    private val library by lazy { LocalLibrary(applicationContext) }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onCreate() {
+        super.onCreate()
+        val channel = NotificationChannel("lecture_audio", "Lecture recordings", NotificationManager.IMPORTANCE_LOW)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            AudioSignals.START -> {
+                if (!running) {
+                    val id = intent.getStringExtra(AudioSignals.FIELD_DOC) ?: return START_NOT_STICKY
+                    val lang = intent.getStringExtra("language") ?: "en"
+                    startCapture(id, lang, intent.getIntExtra("page",0))
+                } else sendStatus("recording")
+            }
+            AudioSignals.STOP -> { running = false; capture?.stopSafely() }
+            AudioSignals.STATUS -> { sendStatus(if (running) "recording" else "idle"); if(!running) stopSelf() }
+            AudioSignals.PAGE -> { if (intent.getStringExtra(AudioSignals.FIELD_DOC) == docId) {
+                page = max(0, intent.getIntExtra("page",0))
+            } }
+        }
+        return START_NOT_STICKY
+    }
+    private fun startCapture(id: String, lang: String, startingPage:Int) {
+        if (runCatching { library.get(id) }.isFailure) { sendStatus("error", "Document not found"); stopSelf(); return }
+        docId=id; sessionId=UUID.randomUUID().toString(); page=startingPage.coerceAtLeast(0)
+        val session = LectureSession(sessionId!!, System.currentTimeMillis(), 0, lang, emptyList())
+        library.putSession(id, session)
+        library.addCue(id, session.id, AudioCue(0, page))
+        running=true
+        val stop = Intent(this, LectureRecorderService::class.java).apply { action=AudioSignals.STOP }
+        val pending = PendingIntent.getService(this, 1, stop, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification=Notification.Builder(this,"lecture_audio")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("EricPDF lecture recording")
+            .setContentText("Microphone is active • stored on this device")
+            .setOngoing(true)
+            .addAction(Notification.Action.Builder(null,"Stop",pending).build()).build()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(310, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else startForeground(310,notification)
+        } catch (e: Exception) { running=false; sendStatus("error",e.message ?: "Microphone permission needed"); stopSelf(); return }
+        worker=thread(name="ericpdf-record",isDaemon=false) { recordLoop(id, session) }
+    }
+    private fun recordLoop(id: String, session: LectureSession) {
+        val wav = library.recordingFile(id, session.id).apply { parentFile?.mkdirs() }
+        var audio: AudioRecord? = null
+        var raf: RandomAccessFile? = null
+        var model: Model? = null
+        var recognizer: Recognizer? = null
+        var totalBytes = 0L
+        val segments=mutableListOf<TranscriptSegment>()
+        var lastSegmentEnd=0L
+        try {
+            val min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
+            require(min > 0) { "16 kHz microphone capture not available" }
+            audio=AudioRecord(MediaRecorder.AudioSource.MIC,16000,AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,max(8192,min * 2))
+            require(audio.state == AudioRecord.STATE_INITIALIZED) { "Unable to initialize microphone" }
+            capture=audio
+            raf=RandomAccessFile(wav,"rw").also { it.setLength(0); WavFile.writeHeader(it,0L) }
+            val modelPath = library.modelDirectory(session.language)
+            if (modelPath.isDirectory && File(modelPath,"am").isDirectory) {
+                try {
+                    model=Model(modelPath.absolutePath)
+                    recognizer=Recognizer(model,16000.0f).apply { setWords(true) }
+                } catch (_:Exception) { sendStatus("model_error","Recording works, but speech model failed to load") }
+            } else sendStatus("model_missing", "Recording works; import a Vosk model for transcription")
+            audio.startRecording()
+            require(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone busy" }
+            elapsedStart=SystemClock.elapsedRealtime()
+            sendStatus("recording")
+            val buffer=ByteArray(4096)
+            var lastHeaderAt=0L
+            while (running) {
+                val read=audio.read(buffer,0,buffer.size)
+                if (read <= 0) { if (!running) break; if (read < 0) error("Microphone read error: $read"); continue }
+                raf.write(buffer,0,read)
+                totalBytes+=read
+                val elapsedMs=totalBytes / 32L
+                if (elapsedMs-lastHeaderAt>=3000) {
+                    WavFile.writeHeader(raf,totalBytes)
+                    raf.seek(44L+totalBytes)
+                    lastHeaderAt=elapsedMs
+                    sendStatus("recording")
+                }
+                if (recognizer?.acceptWaveForm(buffer,read) == true) {
+                    val seg=SpeechSegments.fromJson(recognizer.result,elapsedMs,lastSegmentEnd,page)
+                    if (seg != null) {
+                        lastSegmentEnd=seg.endMs; segments.add(seg)
+                        library.putSession(id,session.copy(durationMs=elapsedMs,segments=segments.toList()))
+                        sendStatus("transcript")
+                    }
+                }
+            }
+            recognizer?.let {
+                val last=SpeechSegments.fromJson(it.finalResult,totalBytes/32L,lastSegmentEnd,page)
+                if (last != null) segments.add(last)
+            }
+        } catch (e: Exception) {
+            sendStatus("error",e.message ?: "Recording failed")
+        } finally {
+            running=false
+            runCatching { audio?.stopSafely(); audio?.release() }; capture=null
+            runCatching { recognizer?.close(); model?.close() }
+            runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
+            library.putSession(id, session.copy(durationMs=totalBytes/32L,segments=segments))
+            sendStatus("stopped")
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+        }
+    }
+    private fun AudioRecord.stopSafely() { runCatching { if (recordingState == AudioRecord.RECORDSTATE_RECORDING) stop() } }
+    private fun sendStatus(event: String, message: String="") {
+        val broadcast=Intent(AudioSignals.EVENT).setPackage(packageName)
+            .putExtra(AudioSignals.FIELD_EVENT,event)
+            .putExtra(AudioSignals.FIELD_DOC,docId)
+            .putExtra(AudioSignals.FIELD_SESSION,sessionId)
+            .putExtra(AudioSignals.FIELD_ELAPSED,elapsedStart)
+            .putExtra("message",message)
+        sendBroadcast(broadcast)
+    }
+    override fun onDestroy() { running=false; capture?.stopSafely(); super.onDestroy() }
+}
+
+object WavFile {
+    // 44-byte canonical PCM WAV header, mono, 16-bit, 16000 Hz.
+    fun writeHeader(raf: RandomAccessFile, pcmBytes: Long) {
+        val end=raf.filePointer; raf.seek(0L)
+        fun ascii(s:String) { raf.write(s.toByteArray(Charsets.US_ASCII)) }
+        fun le32(v: Long) { repeat(4) { raf.write(((v ushr (8*it)) and 255).toInt()) } }
+        fun le16(v:Int) { repeat(2) { raf.write((v ushr (8*it)) and 255) } }
+        ascii("RIFF"); le32(36 + pcmBytes); ascii("WAVEfmt "); le32(16)
+        le16(1); le16(1); le32(16000); le32(32000); le16(2); le16(16)
+        ascii("data"); le32(pcmBytes)
+        raf.seek(maxOf(44L,end))
+    }
+}
+
+object SpeechSegments {
+    fun fromJson(json:String, fallbackEndMs:Long, previousEndMs:Long, page:Int):TranscriptSegment? {
+        val obj=runCatching { JSONObject(json) }.getOrNull() ?: return null
+        val text=obj.optString("text").trim()
+        if (text.isBlank()) return null
+        val words=obj.optJSONArray("result")
+        val start=if (words != null && words.length()>0) {
+            (words.optJSONObject(0)?.optDouble("start",previousEndMs/1000.0) ?: previousEndMs/1000.0).times(1000).toLong()
+        } else previousEndMs
+        val end=if (words != null && words.length()>0) {
+            (words.optJSONObject(words.length()-1)?.optDouble("end",fallbackEndMs/1000.0) ?: fallbackEndMs/1000.0).times(1000).toLong()
+        } else fallbackEndMs
+        return TranscriptSegment(max(0,start),max(start,end),text,page)
+    }
+}
