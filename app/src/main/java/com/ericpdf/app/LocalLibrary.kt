@@ -13,7 +13,10 @@ import java.util.UUID
 
 data class LibraryDoc(
     val id: String, val title: String, val course: String, val createdAt: Long,
-    val pageCount: Int, val lastPage: Int = 0
+    val pageCount: Int, val lastPage: Int = 0, val folderId: String? = null
+)
+data class LibraryFolder(
+    val id: String, val name: String, val parentId: String?, val createdAt: Long
 )
 data class InkPoint(val x: Float, val y: Float)
 data class InkStroke(
@@ -58,7 +61,8 @@ class LocalLibrary(private val context: Context) {
         return File(documentDirectory(docId), "audio/$sessionId-cues.json")
     }
 
-    fun importPdf(uri: Uri, title: String, course: String = "Unsorted"): LibraryDoc {
+    fun importPdf(uri: Uri, title: String, course: String = "Unsorted", folderId: String? = null): LibraryDoc {
+        require(folderId==null || folders().any {it.id==folderId}) { "Choose a valid folder" }
         val id = UUID.randomUUID().toString()
         val dir = documentDirectory(id).apply { mkdirs() }
         try {
@@ -72,7 +76,7 @@ class LocalLibrary(private val context: Context) {
             val pages = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 PdfRenderer(descriptor).use { it.pageCount }
             }
-            val doc = LibraryDoc(id, title.ifBlank { "Untitled PDF" }.take(150), course.ifBlank { "Unsorted" }.take(90), System.currentTimeMillis(), pages)
+            val doc = LibraryDoc(id, title.ifBlank { "Untitled PDF" }.take(150), course.ifBlank { "Unsorted" }.take(90), System.currentTimeMillis(), pages, folderId=folderId)
             writeAtomic(manifest(id), encodeDoc(doc).toString())
             return doc
         } catch (e: Exception) { dir.deleteRecursively(); throw e }
@@ -85,6 +89,113 @@ class LocalLibrary(private val context: Context) {
     fun delete(id: String) {
         documentDirectory(id).deleteRecursively()
         AutoBackup.changed(context,now=true)
+    }
+
+    private val folderFile = File(root,"folders.json")
+    private val uuidPattern=Regex("[a-f0-9-]{36}")
+
+    @Synchronized fun folders():List<LibraryFolder> {
+        val arr=readArray(folderFile)
+        return (0 until arr.length()).mapNotNull {i->runCatching {
+            val obj=arr.getJSONObject(i)
+            val id=obj.getString("id")
+            val name=obj.getString("name")
+            val parent=obj.optString("parentId","").takeUnless {it.isBlank() || it=="null"}
+            if(!uuidPattern.matches(id) || name.isBlank() || name.length>90 ||
+                (parent!=null && !uuidPattern.matches(parent))) null
+            else LibraryFolder(id,name,parent,obj.optLong("createdAt",0L))
+        }.getOrNull() }.filterNotNull()
+    }
+    private fun storeFolders(items:List<LibraryFolder>) {
+        val array=JSONArray()
+        items.forEach { f -> array.put(JSONObject().put("id",f.id).put("name",f.name)
+            .put("parentId",f.parentId ?: JSONObject.NULL).put("createdAt",f.createdAt)) }
+        writeAtomic(folderFile,array.toString())
+    }
+    private fun validateName(name:String):String {
+        val clean=name.trim()
+        require(clean.isNotEmpty() && clean.length<=90 && clean.none {it=='/' || it=='\\' || it=='\u0000'}) {
+            "Folder name must be 1–90 characters with no slashes"
+        }
+        return clean
+    }
+    @Synchronized fun createFolder(name:String,parentId:String?):LibraryFolder {
+        val items=folders()
+        require(parentId==null || items.any {it.id==parentId}) { "Parent folder missing" }
+        val clean=validateName(name)
+        require(items.none {it.parentId==parentId && it.name.equals(clean,true)}) { "Folder already exists" }
+        return LibraryFolder(UUID.randomUUID().toString(),clean,parentId,System.currentTimeMillis()).also {
+            storeFolders(items+it)
+        }
+    }
+    @Synchronized fun renameFolder(id:String,name:String) {
+        val items=folders()
+        require(items.any {it.id==id}) { "Folder missing" }
+        val clean=validateName(name)
+        val current=items.first {it.id==id}
+        require(items.none {it.id!=id && it.parentId==current.parentId && it.name.equals(clean,true)}) {
+            "Folder already exists"
+        }
+        storeFolders(items.map {if(it.id==id) it.copy(name=clean) else it})
+    }
+    @Synchronized fun moveFolder(id:String,newParentId:String?) {
+        val items=folders()
+        require(items.any {it.id==id}) { "Folder missing" }
+        require(newParentId==null || items.any {it.id==newParentId}) { "Destination missing" }
+        var ancestor=newParentId
+        val visited=mutableSetOf<String>()
+        while(ancestor!=null) {
+            require(ancestor!=id && visited.add(ancestor)) { "Cannot move a folder inside itself" }
+            ancestor=items.firstOrNull {it.id==ancestor}?.parentId
+        }
+        val selected=items.first {it.id==id}
+        require(items.none {it.id!=id && it.parentId==newParentId && it.name.equals(selected.name,true)}) {
+            "Destination already contains a folder with this name"
+        }
+        storeFolders(items.map {if(it.id==id) it.copy(parentId=newParentId) else it})
+    }
+    @Synchronized fun deleteFolder(id:String) {
+        val items=folders()
+        require(items.any {it.id==id}) { "Folder missing" }
+        require(items.none {it.parentId==id}) { "Move subfolders out first" }
+        require(list().none {it.folderId==id}) { "Move documents out first" }
+        storeFolders(items.filterNot {it.id==id})
+    }
+    fun moveDocument(id:String,folderId:String?) {
+        require(folderId==null || folders().any {it.id==folderId}) { "Destination folder missing" }
+        update(get(id).copy(folderId=folderId))
+    }
+    fun renameDocument(id:String,newName:String) {
+        val name=newName.trim()
+        require(name.isNotBlank() && name.length<=150) { "Name must be 1–150 characters" }
+        update(get(id).copy(title=name))
+    }
+    fun folderMetadata():String = if(folderFile.isFile) folderFile.readText() else "[]"
+    @Synchronized fun mergeFolderMetadata(raw:String) {
+        require(raw.length<=2_000_000) { "Too much folder metadata" }
+        val array=JSONArray(raw)
+        require(array.length()<=10000) { "Too many folders" }
+        val incoming=(0 until array.length()).map {i->
+            val obj=array.getJSONObject(i)
+            val id=obj.getString("id")
+            require(uuidPattern.matches(id)) { "Invalid folder identifier" }
+            val name=validateName(obj.getString("name"))
+            val parent=obj.optString("parentId","").takeUnless {it.isBlank() || it=="null"}
+            require(parent==null || uuidPattern.matches(parent)) { "Invalid parent folder" }
+            LibraryFolder(id,name,parent,obj.optLong("createdAt"))
+        }
+        require(incoming.distinctBy {it.id}.size==incoming.size) { "Duplicate folder identifier" }
+        val merged=(folders()+incoming.filterNot {folder->folders().any {it.id==folder.id}} )
+        val index=merged.associateBy {it.id}
+        for(folder in incoming) {
+            var cursor:String?=folder.id
+            val checked=mutableSetOf<String>()
+            while(cursor!=null) {
+                require(checked.add(cursor)) { "Folder cycle" }
+                cursor=index[cursor]?.parentId
+            }
+        }
+        storeFolders(merged)
     }
 
     fun readInk(id: String, page: Int): List<InkStroke> = readArray(inkFile(id, page)).let { arr ->
@@ -168,9 +279,10 @@ class LocalLibrary(private val context: Context) {
     }
     private fun encodeDoc(d: LibraryDoc) = JSONObject().put("id",d.id).put("title",d.title)
         .put("course",d.course).put("createdAt",d.createdAt).put("pageCount",d.pageCount)
-        .put("lastPage",d.lastPage)
+        .put("lastPage",d.lastPage).put("folderId",d.folderId ?: JSONObject.NULL)
     private fun decodeDoc(o: JSONObject) = LibraryDoc(o.getString("id"),o.getString("title"),
-        o.optString("course","Unsorted"),o.getLong("createdAt"),o.getInt("pageCount"),o.optInt("lastPage"))
+        o.optString("course","Unsorted"),o.getLong("createdAt"),o.getInt("pageCount"),o.optInt("lastPage"),
+        o.optString("folderId","").takeIf {it.isNotBlank() && it!="null"})
     private fun encodeSession(s: LectureSession) = JSONObject().put("id",s.id).put("createdAt",s.createdAt)
         .put("durationMs",s.durationMs).put("language",s.language).put("segments",JSONArray().also { arr ->
             s.segments.forEach { arr.put(JSONObject().put("startMs",it.startMs).put("endMs",it.endMs)
