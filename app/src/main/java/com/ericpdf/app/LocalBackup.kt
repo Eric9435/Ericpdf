@@ -31,6 +31,10 @@ object LocalBackup {
             zip.putNextEntry(ZipEntry("backup.json"))
             zip.write(manifest)
             zip.closeEntry()
+            // Folder tree metadata is part of every restorable backup.
+            zip.putNextEntry(ZipEntry("folders.json"))
+            zip.write(LocalLibrary(context).folderMetadata().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
             for(doc in docs) {
                 val dir=File(root,doc.id)
                 if(!dir.isDirectory) continue
@@ -58,7 +62,7 @@ object LocalBackup {
                 while(true) {
                     val entry=zip.nextEntry ?: break
                     val name=entry.name
-                    require(name=="backup.json" || name.startsWith("documents/")) { "Invalid EricPDF backup entry" }
+                    require(name=="backup.json" || name=="folders.json" || name.startsWith("documents/")) { "Invalid EricPDF backup entry" }
                     require(encountered.add(name)) { "Duplicate backup entry" }
                     entries++
                     require(entries<=MAX_FILES) { "Backup has too many files" }
@@ -103,6 +107,8 @@ object LocalBackup {
                 require(dir.renameTo(target)) { "Cannot restore document ${dir.name}" }
                 imported++
             }
+            val folderMetadata=File(staging,"folders.json")
+            if(folderMetadata.isFile) LocalLibrary(context).mergeFolderMetadata(folderMetadata.readText())
             return RestoreResult(imported,skipped)
         } finally {
             staging.deleteRecursively()
