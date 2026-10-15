@@ -2,12 +2,13 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.5.0)
+## Implemented in this source project (v0.6.0)
 
 | Feature | Implementation |
 |---|---|
 | PDF import | Android file picker (`ACTION_OPEN_DOCUMENT`); original copied to app-private storage |
-| PDF reading | Android `PdfRenderer`, one-page viewer, page navigation, zoom, jump-to-page |
+| PDF reading | Full-height Android `PdfRenderer` reader, floating controls, pinch zoom, and two-finger horizontal swipe to change pages (only at fit zoom) |
+| Folder library | Sidebar-free nested folders with PDF thumbnails, breadcrumb paths, global title/course/folder search, sorting, rename, move, and safe empty-folder deletion |
 | PDF text search | PDFBox-Android extracts native text per page, returns clickable match pages; OCR NOT included |
 | Ink | Pen (blue/red), yellow highlighter, stroke eraser, undo-last-stroke; normalized vector points persist in JSON |
 | Bookmarks | Local persistent per-PDF page bookmarks |
@@ -22,9 +23,16 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Transcript | Search, correct recognized text, jump to transcript's page/timestamp |
 | Exports | Save annotated PDF (rasterized pages), export transcripts as `.txt`, save original lecture WAV files |
 | Data locality | Original PDFs, audio recordings and notes remain local. Optional online mode sends short mic audio chunks via an authenticated HTTPS proxy to OpenRouter; Offline mode does not transmit audio. |
-| Backup / restore | Manual ZIP export/restore and optional automatic local backups to user-selected Android Documents folder (Storage Access Framework). Worker schedules after edits, after completed recording and every 6 hours; last 3 automatic snapshots kept. |
+| Backup / restore | Folder tree metadata is included in ZIP archives; manual ZIP export/restore and optional automatic local backups to user-selected Android Documents folder (Storage Access Framework). Worker schedules after edits, after completed recording and every 6 hours; last 3 automatic snapshots kept. |
 
 > **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
+
+## Navigation and ownership
+
+- **Two-finger swipe left:** next PDF page; **two-finger swipe right:** previous page. At high zoom the swipe does not flip pages, so you can navigate the zoomed document. Pinch zoom and one-finger inking remain available.
+- **No left sidebar:** the main Documents screen opens at the root. Create nested folders (e.g. TUHH > Microsystem), use breadcrumbs, search across all folders, and move PDFs using the item action menu.
+- **Settings:** separate page for speech model, optional online proxy, manual/automatic backup.
+- **About:** Developed by **innovateX** · Developer **Eric Scott @ Aung Phone Myat** · Contact **ericscott.de@gmail.com**. Current version is displayed from Android's installed package metadata.
 
 ## Requirements
 
