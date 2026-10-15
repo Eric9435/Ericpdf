@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.2.0)
+## Implemented in this source project (v0.3.0)
 
 | Feature | Implementation |
 |---|---|
@@ -112,3 +112,7 @@ This original project source is provided for customization. Third-party dependen
 ## Live notes transparency
 
 **Live notes** are timestamped recognized phrases associated with the current PDF page, not an AI-generated conceptual summary. Provisional recognition may change; only finalized phrases are saved. The offline model is needed for both transcription and automatic notes. Recording may continue with the screen locked after the user starts it while the app is visible, but system power restrictions or microphone contention may interrupt it. Android displays a persistent recording notification with a Stop control. Recording without a speech model still saves WAV audio only.
+
+## Optional Online transcription (v0.3.0)
+
+Select **Online** from Library settings. This streams microphone audio over encrypted WSS to a speech provider via an ephemeral credential; PDFs, WAV recordings and transcript files remain in app-private storage. Requires a separately hosted authenticated token issuer in `cloud-session-server/`, an OpenAI API key stored only in the server's environment, and API billing. Enter its HTTPS `/session` URL and access code in the app. The access code is kept in runtime memory, not saved. Offline Vosk remains selectable. If the cloud connection fails, WAV recording continues locally without live cloud captions. Obtain lecturer permission before recording. Realtime transcripts may be inaccurate. See the separate server setup instructions and account usage limits.
