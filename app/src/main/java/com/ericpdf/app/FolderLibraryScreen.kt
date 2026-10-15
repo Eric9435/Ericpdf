@@ -97,7 +97,7 @@ fun FolderLibraryScreen(
                         Text("EricPDF",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=InkNavy)
                         Text("My documents",style=MaterialTheme.typography.labelSmall,color=Color.Gray)
                     }
-                    IconButton(onClick={about=true}) {Icon(Icons.Default.InfoOutline,"About EricPDF")}
+                    IconButton(onClick={about=true}) {Icon(Icons.Default.Info,"About EricPDF")}
                     IconButton(onClick=onSettings) {Icon(Icons.Default.Settings,"Settings and backup")}
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
