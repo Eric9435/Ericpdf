@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -75,6 +76,9 @@ private fun MainApp() {
     var toast by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var speechLanguage by rememberSaveable { mutableStateOf("en") }
+    var cloudMode by rememberSaveable { mutableStateOf(false) }
+    var cloudEndpoint by rememberSaveable { mutableStateOf("") }
+    var cloudCode by remember { mutableStateOf("") }
     var modelStatus by remember { mutableStateOf(0) }
     var recording by remember { mutableStateOf(RecordingUiState()) }
     var importCourse by rememberSaveable { mutableStateOf("Unsorted") }
@@ -100,7 +104,7 @@ private fun MainApp() {
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
                     intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
                     intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "")
-                if (event=="model_error" || event=="model_missing" || event=="error") {
+                if (event=="model_error" || event=="model_missing" || event=="cloud_error" || event=="error") {
                     toast=recording.error
                 }
                 if (isFinished || event=="transcript") refreshKey++
@@ -209,6 +213,8 @@ private fun MainApp() {
         if(allowed && activeId!=null) {
             context.startForegroundService(Intent(context,LectureRecorderService::class.java).apply {
                 action=AudioSignals.START;putExtra(AudioSignals.FIELD_DOC,activeId);putExtra("language",speechLanguage);putExtra("page",pendingMicPage)
+                putExtra("cloudMode",cloudMode);putExtra("cloudEndpoint",cloudEndpoint.trim())
+                putExtra("cloudCode",cloudCode)
             })
             recording=RecordingUiState(event="starting",docId=activeId)
         } else toast="Microphone permission is required for recordings"
@@ -217,6 +223,8 @@ private fun MainApp() {
     Column(Modifier.fillMaxSize().background(Mist)) {
         if (activeId==null) {
             HomeScreen(docs=docs,busy=busy,language=speechLanguage,course=importCourse,
+                cloudMode=cloudMode,cloudEndpoint=cloudEndpoint,cloudCode=cloudCode,
+                onCloudMode={cloudMode=it},onCloudEndpoint={cloudEndpoint=it},onCloudCode={cloudCode=it},
                 hasModel=lib.modelDirectory(speechLanguage).isDirectory,notice=toast,
                 onLanguage={speechLanguage=it},onCourse={importCourse=it},
                 onOpen={activeId=it},onImport={pdfPicker.launch(arrayOf("application/pdf"))},
@@ -227,7 +235,7 @@ private fun MainApp() {
         } else {
             val item=docs.firstOrNull { it.id==activeId }
             if(item==null) { LaunchedEffect(activeId) { activeId=null } }
-            else ReaderScreen(doc=item,lib=lib,language=speechLanguage,
+            else ReaderScreen(doc=item,lib=lib,language=speechLanguage,cloudMode=cloudMode,
                 hasModel=lib.modelDirectory(speechLanguage).isDirectory,recording=recording,
                 notice=toast,refreshKey=refreshKey,
                 onBack={activeId=null;refresh()},
@@ -267,6 +275,8 @@ private fun MainApp() {
                     } else if(recording.docId!=null && recording.docId!=item.id &&
                         recording.event !in setOf("idle","stopped","error")) {
                         toast="Finish the recording in the other PDF before starting a new lecture"
+                    } else if(cloudMode && (!cloudEndpoint.startsWith("https://") || cloudCode.isBlank())) {
+                        toast="Set up HTTPS cloud token-server URL and access code on the Library screen first"
                     } else {
                         pendingMicPage=currentPage
                         confirmRecording=true
@@ -278,13 +288,17 @@ private fun MainApp() {
     }
     if(confirmRecording) AlertDialog(onDismissRequest={confirmRecording=false},
         title={Text("Recording permission")},
-        text={Text("Record your professor only after obtaining the lecturer's and university's permission. The audio and transcripts remain private to this device unless you export them.")},
+        text={Text(if(cloudMode)
+            "Recording requires professor permission. Online mode sends microphone audio to a third-party speech provider. PDFs and WAV remain locally stored. API charges may apply."
+            else "Record your professor only after obtaining permission. Audio and transcripts remain private to this device unless you export them.")},
         confirmButton={TextButton(onClick={
             confirmRecording=false
             if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) {
                 context.startForegroundService(Intent(context,LectureRecorderService::class.java).apply {
                     action=AudioSignals.START;putExtra(AudioSignals.FIELD_DOC,activeId)
                     putExtra("language",speechLanguage);putExtra("page",pendingMicPage)
+                putExtra("cloudMode",cloudMode);putExtra("cloudEndpoint",cloudEndpoint.trim())
+                putExtra("cloudCode",cloudCode)
                 })
                 recording=RecordingUiState(event="starting",docId=activeId)
             } else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -314,6 +328,8 @@ fun humanTime(ms:Long):String {
 @Composable
 private fun HomeScreen(
     docs:List<LibraryDoc>,busy:Boolean,language:String,course:String,hasModel:Boolean,notice:String,
+    cloudMode:Boolean,cloudEndpoint:String,cloudCode:String,
+    onCloudMode:(Boolean)->Unit,onCloudEndpoint:(String)->Unit,onCloudCode:(String)->Unit,
     onLanguage:(String)->Unit,onCourse:(String)->Unit,onOpen:(String)->Unit,
     onImport:()->Unit,onModel:()->Unit,onBackup:()->Unit,onRestore:()->Unit,
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
@@ -372,10 +388,23 @@ private fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
+                FilterChip(selected=!cloudMode,onClick={onCloudMode(false)},label={Text("Offline")})
+                FilterChip(selected=cloudMode,onClick={onCloudMode(true)},label={Text("Online")})
                 FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("English ASR")})
                 FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("Deutsch ASR")})
-                Text(if(hasModel) "Model ready" else "Model needed",style=MaterialTheme.typography.labelSmall,
-                    color=if(hasModel) Color(0xFF15794C) else Color(0xFFB26B00))
+                Text(if(cloudMode) "Online speech" else if(hasModel) "Model ready" else "Model needed",style=MaterialTheme.typography.labelSmall,
+                    color=if(cloudMode||hasModel) Color(0xFF15794C) else Color(0xFFB26B00))
+            }
+            if(cloudMode) {
+                Text("Online mode transmits lecture audio. ChatGPT Plus does not include API processing fees.",
+                    style=MaterialTheme.typography.labelSmall,color=Color(0xFF8B5730))
+                OutlinedTextField(value=cloudEndpoint,onValueChange=onCloudEndpoint,
+                    modifier=Modifier.fillMaxWidth(),singleLine=true,
+                    label={Text("HTTPS token-server URL ending in /session")})
+                OutlinedTextField(value=cloudCode,onValueChange=onCloudCode,
+                    modifier=Modifier.fillMaxWidth(),singleLine=true,
+                    visualTransformation=PasswordVisualTransformation(),
+                    label={Text("Server access code • not saved")})
             }
             OutlinedTextField(value=course,onValueChange=onCourse,modifier=Modifier.fillMaxWidth(),singleLine=true,
                 label={Text("Course label for next import (e.g. Control Systems)")})
