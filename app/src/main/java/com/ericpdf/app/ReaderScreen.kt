@@ -6,6 +6,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,6 +37,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +50,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.pow
+import kotlin.math.abs
+import kotlin.math.hypot
 
 private val InkBlue=0xFF2167CE.toInt()
 private val InkRed=0xFFE35049.toInt()
@@ -195,6 +200,7 @@ fun ReaderScreen(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 ReaderPage(doc,lib,page,penTool,color,zoom,strokes,
+                    onPageSwipe={direction->page=(page+direction).coerceIn(0,doc.pageCount-1)},
                     onZoom={zoom=it},
                     onInk={strokes=it;lib.saveInk(doc.id,page,it);onStroke(page)},
                     modifier=Modifier.fillMaxSize())
@@ -329,7 +335,8 @@ private fun PageBar(page:Int,count:Int,onPrev:()->Unit,onNext:()->Unit,onJump:()
 
 @Composable
 private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,color:Int,zoom:Float,
-    strokes:List<InkStroke>,onZoom:(Float)->Unit,onInk:(List<InkStroke>)->Unit,modifier:Modifier=Modifier) {
+    strokes:List<InkStroke>,onPageSwipe:(Int)->Unit,
+    onZoom:(Float)->Unit,onInk:(List<InkStroke>)->Unit,modifier:Modifier=Modifier) {
     val currentZoom by rememberUpdatedState(zoom)
     var bitmap by remember(doc.id,page) { mutableStateOf<Bitmap?>(null) }
     var error by remember(doc.id,page) { mutableStateOf<String?>(null) }
@@ -339,7 +346,49 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
         catch(e:Exception){error=e.message ?: "Page could not be rendered"}
     }
     DisposableEffect(bitmap) { val toDispose=bitmap; onDispose {toDispose?.recycle()} }
-    BoxWithConstraints(modifier.background(Color(0xFFE8EBF1))) {
+    // Observe two-finger gestures in the Initial pass without stealing single-finger
+    // drawing or the existing pinch zoom. A deliberate horizontal two-finger slide
+    // turns one page only after the gesture finishes.
+    var multiTouchInk by remember(page) { mutableStateOf(false) }
+    val pageSwipeListener=Modifier.pointerInput(page,zoom) {
+        val minDistance=94.dp.toPx()
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed=false)
+            var total=Offset.Zero
+            var sawPair=false
+            var hadPinch=false
+            var lastCentroid:Offset?=null
+            var firstDistance=0f
+            try {
+                while(true) {
+                    val changes=awaitPointerEvent(PointerEventPass.Initial).changes
+                    val pressed=changes.filter {it.pressed}
+                    if(pressed.size>=2) {
+                        multiTouchInk=true
+                        val a=pressed[0].position
+                        val b=pressed[1].position
+                        val center=Offset((a.x+b.x)*0.5f,(a.y+b.y)*0.5f)
+                        val spacing=hypot(a.x-b.x,a.y-b.y)
+                        if(!sawPair) {sawPair=true;firstDistance=spacing}
+                        else {
+                            lastCentroid?.let {total+=center-it}
+                            if(firstDistance>1f && abs(spacing/firstDistance-1f)>0.10f)
+                                hadPinch=true
+                        }
+                        lastCentroid=center
+                    } else lastCentroid=null
+                    if(pressed.isEmpty()) break
+                }
+            } finally {
+                // Keep the ink suppression flag until the next drawing gesture.
+            }
+            if(sawPair && !hadPinch && zoom<=1.05f &&
+                abs(total.x)>=minDistance && abs(total.x)>abs(total.y)*1.45f) {
+                onPageSwipe(if(total.x<0f) 1 else -1)
+            }
+        }
+    }
+    BoxWithConstraints(modifier.background(Color(0xFFE8EBF1)).then(pageSwipeListener)) {
         val b=bitmap
         val aspect=if(b!=null) b.width.toFloat()/b.height.toFloat() else 0.72f
         val usableWidth=(maxWidth-16.dp).coerceAtLeast(80.dp)
@@ -365,6 +414,7 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
                     (p.y/pageSize.height.coerceAtLeast(1)).coerceIn(0f,1f))
                 detectDragGestures(
                     onDragStart={pt ->
+                        multiTouchInk=false
                         if(tool==PenTool.ERASE) {
                             val where=toNorm(pt)
                             val next=eraseClosest(strokes,where)
@@ -375,14 +425,16 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
                     },
                     onDragEnd={
                         val s=draft
-                        if(s!=null && s.points.size>=2) onInk(strokes+s)
+                        if(!multiTouchInk && s!=null && s.points.size>=2) onInk(strokes+s)
                         draft=null
                     },
                     onDragCancel={draft=null}
                 ) { change,_ ->
                     change.consume()
                     val pt=toNorm(change.position)
-                    if(tool==PenTool.ERASE) {
+                    if(multiTouchInk) {
+                        draft=null
+                    } else if(tool==PenTool.ERASE) {
                         val next=eraseClosest(strokes,pt)
                         if(next.size!=strokes.size) onInk(next)
                     } else draft=draft?.copy(points=draft!!.points+pt)
