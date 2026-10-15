@@ -460,7 +460,6 @@ private fun HomeScreen(
     onDisableAuto:()->Unit,
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit,onLibrary:()->Unit
 ) {
-    var query by remember { mutableStateOf("") }
     val contactContext=LocalContext.current
     val onlineConfigured=cloudEndpoint.trim().startsWith("https://") && cloudEndpoint.trim().endsWith("/transcribe") && cloudCode.length>=24
     Column(Modifier.fillMaxSize()) {
@@ -501,7 +500,8 @@ private fun HomeScreen(
                 }
             }
         }
-        Column(Modifier.fillMaxSize().padding(horizontal=16.dp,vertical=12.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal=16.dp,vertical=12.dp)) {
             if(notice.isNotBlank()) {
                 Card(colors=CardDefaults.cardColors(containerColor=Color(0xFFE5EEFF))) {
                     Row(Modifier.fillMaxWidth().padding(10.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -571,8 +571,8 @@ private fun HomeScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(value=query,onValueChange={query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,
-                leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Find PDF or course")})
+            Text("SPEECH & TRANSCRIPTION",color=Accent,fontWeight=FontWeight.Bold,
+                style=MaterialTheme.typography.labelMedium)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
