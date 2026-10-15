@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.1.0)
+## Implemented in this source project (v0.2.0)
 
 | Feature | Implementation |
 |---|---|
@@ -24,7 +24,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Data locality | No account, no analytics, no backend, no `INTERNET` permission, no cloud upload |
 | Backup / restore | Manual local ZIP export and import of PDFs, annotations, typed notes and WAV/transcript sessions; Vosk language models excluded |
 
-> **Status:** A substantial first source-code implementation, **not a tested production release**. This environment does not have Android SDK/Gradle distribution or an emulator, so no APK was compiled and no hardware/microphone test was performed here. The CI workflow can compile the code and surface any remaining issues once placed in a repository.
+> **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
 
 ## Requirements
 
@@ -103,7 +103,7 @@ ericpdf/
 
 ## Repository
 
-Target repository is `Eric9435/Ericpdf`. At project creation time that repository was **not visible/available** through the linked GitHub account. Create it or grant the GitHub connector access, then upload the contents of this project into its root. This source ZIP does **not** itself create or update a GitHub repository.
+Official source: [Eric9435/Ericpdf](https://github.com/Eric9435/Ericpdf). Under **Actions → EricPDF Android APK**, download the artifact from a successful workflow run; unzip it to install the debug APK. No cloud login is needed inside the Android app.
 
 ## Licensing and dependencies
 

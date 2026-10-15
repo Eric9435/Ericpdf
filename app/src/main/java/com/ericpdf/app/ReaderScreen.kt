@@ -456,10 +456,15 @@ private fun SidePanel(
             2 -> {
                 // Show interim speech and persisted, automatically drafted notes.
                 val liveSession=if(hasRecording && recording.sessionId!=null)
-                    sessions.firstOrNull { it.id==recording.sessionId } ?: session
+                    sessions.firstOrNull { it.id==recording.sessionId }
                     else session
                 val written=remember(doc.id,liveSession?.id,liveSession?.segments?.size) {
                     liveSession?.let { lib.readGeneratedNotes(doc.id,it.id) }.orEmpty()
+                }
+                val liveScroll=rememberScrollState()
+                var followLive by remember { mutableStateOf(true) }
+                LaunchedEffect(written.length,followLive) {
+                    if(followLive) liveScroll.scrollTo(liveScroll.maxValue)
                 }
                 Column(Modifier.fillMaxSize().padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -472,6 +477,11 @@ private fun SidePanel(
                             enabled=written.isNotBlank()) {
                             Icon(Icons.Default.SaveAlt,"Export live notes to TXT")
                         }
+                    }
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                        Text("Follow newest notes",modifier=Modifier.weight(1f),
+                            style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+                        Switch(checked=followLive,onCheckedChange={followLive=it})
                     }
                     Text("Offline speech notes • timestamped and linked to PDF pages",
                         style=MaterialTheme.typography.labelSmall,color=Color.Gray)
@@ -494,7 +504,7 @@ private fun SidePanel(
                             style=MaterialTheme.typography.bodySmall,color=Color.Gray)
                     } else {
                         SelectionContainer {
-                            Text(written,modifier=Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                            Text(written,modifier=Modifier.fillMaxSize().verticalScroll(liveScroll),
                                 style=MaterialTheme.typography.bodyMedium)
                         }
                     }
