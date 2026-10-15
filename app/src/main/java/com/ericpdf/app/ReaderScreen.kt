@@ -50,7 +50,7 @@ private enum class PenTool { READ, PEN, HIGHLIGHT, ERASE }
 
 @Composable
 fun ReaderScreen(
-    doc:LibraryDoc,lib:LocalLibrary,language:String,hasModel:Boolean,recording:RecordingUiState,
+    doc:LibraryDoc,lib:LocalLibrary,language:String,hasModel:Boolean,cloudMode:Boolean,recording:RecordingUiState,
     notice:String,refreshKey:Int,onBack:()->Unit,onLanguage:(String)->Unit,onMessage:(String)->Unit,
     onExport:()->Unit,onExportText:(String)->Unit,onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,
@@ -152,7 +152,7 @@ fun ReaderScreen(
                     PageBar(page,doc.pageCount,onPrev={page--},onNext={page++},onJump={showJump=true})
                 }
                 VerticalDivider()
-                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,
+                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
                     language,onLanguage,tab,{tab=it},processing,
                     onRecordToggle={onRecordToggle(page)},
                     onRetranscribe={ selected ->
@@ -175,7 +175,7 @@ fun ReaderScreen(
                 },modifier=Modifier.weight(0.62f))
                 PageBar(page,doc.pageCount,onPrev={page--},onNext={page++},onJump={showJump=true})
                 HorizontalDivider()
-                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,
+                SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
                     language,onLanguage,tab,{tab=it},processing,
                     onRecordToggle={onRecordToggle(page)},
                     onRetranscribe={selected ->
@@ -309,7 +309,7 @@ private fun eraseClosest(strokes:List<InkStroke>,point:InkPoint):List<InkStroke>
 private fun SidePanel(
     doc:LibraryDoc,lib:LocalLibrary,page:Int,bookmarks:Set<Int>,sessions:List<LectureSession>,session:LectureSession?,
     selectSession:(LectureSession)->Unit,recording:RecordingUiState,hasRecording:Boolean,
-    hasModel:Boolean,language:String,onLanguage:(String)->Unit,
+    hasModel:Boolean,cloudMode:Boolean,language:String,onLanguage:(String)->Unit,
     tab:Int,onTab:(Int)->Unit,processing:Boolean,
     onRecordToggle:()->Unit,onRetranscribe:(LectureSession)->Unit,onExportText:(String)->Unit,
     onExportLiveNotes:(String)->Unit,
@@ -340,8 +340,8 @@ private fun SidePanel(
             horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("EN")})
             FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("DE")})
-            Text(if(hasModel) "Offline ASR ready" else "Import model for ASR",style=MaterialTheme.typography.labelSmall,
-                color=if(hasModel) Color(0xFF2B8A52) else Color(0xFFAF6917),
+            Text(if(cloudMode) "Online ASR · audio upload" else if(hasModel) "Offline ASR ready" else "Import model for ASR",style=MaterialTheme.typography.labelSmall,
+                color=if(cloudMode||hasModel) Color(0xFF2B8A52) else Color(0xFFAF6917),
                 modifier=Modifier.align(Alignment.CenterVertically))
         }
         TabRow(selectedTabIndex=tab) {
@@ -492,7 +492,7 @@ private fun SidePanel(
                                 Text("LIVE RECOGNITION",fontWeight=FontWeight.Bold,
                                     style=MaterialTheme.typography.labelSmall,color=Color(0xFF275798))
                                 Text(recording.partial.ifBlank {
-                                    if(hasModel) "Listening… live words will appear here."
+                                    if(cloudMode) "Connecting to cloud transcription…" else if(hasModel) "Listening… live words will appear here."
                                     else "Import an offline EN/DE Vosk model to enable live words."
                                 },style=MaterialTheme.typography.bodyMedium)
                             }
