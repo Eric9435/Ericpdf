@@ -139,12 +139,17 @@ object AutoBackup {
             ?: error("Backup folder is no longer accessible")
         require(folder.isDirectory && folder.canWrite()){"Backup folder is not writable"}
         val stamp=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
-        val target=folder.createFile("application/zip","$PREFIX$stamp.zip")
+        // Use a temporary name so the backup picker never mistakes an
+        // interrupted/incomplete archive for a successfully finished ZIP.
+        val name="$PREFIX$stamp.zip"
+        val target=folder.createFile("application/octet-stream","$name.pending")
             ?: error("Unable to create external backup")
         try {
             LocalBackup.export(ctx,target.uri)
-            // A successful export finished closing its ZIP before older backups are pruned.
-            // Keep 3 previous points in time including the new snapshot.
+            require(target.renameTo(name)) {
+                "Folder provider could not finalize backup file; choose Documents on this phone"
+            }
+            // A complete ZIP has been closed and renamed before old files are pruned.
             prefs(ctx).edit().putLong(LAST_SUCCESS,System.currentTimeMillis())
                 .remove(LAST_FAILURE).apply()
             archives(ctx).drop(MAX_ARCHIVES).forEach { old ->
