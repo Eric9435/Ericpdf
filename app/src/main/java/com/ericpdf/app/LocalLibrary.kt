@@ -3,6 +3,7 @@ package com.ericpdf.app
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.util.AtomicFile
 import android.graphics.pdf.PdfRenderer
 import org.json.JSONArray
 import org.json.JSONObject
@@ -137,14 +138,16 @@ class LocalLibrary(private val context: Context) {
         cuesFile(docId, sessionId).delete()
     }
     private fun readArray(file: File) = runCatching { JSONArray(file.readText()) }.getOrDefault(JSONArray())
-    private fun writeAtomic(dest: File, contents: String) {
+    @Synchronized private fun writeAtomic(dest: File, contents: String) {
         dest.parentFile?.mkdirs()
-        val tmp = File(dest.parentFile, "${dest.name}.tmp")
-        tmp.writeText(contents)
-        if (!tmp.renameTo(dest)) {
-            // Some file systems do not replace destinations with renameTo; fail rather than lose old data.
-            if (!tmp.copyTo(dest, overwrite = true).exists()) error("Could not save data")
-            tmp.delete()
+        val atomic=AtomicFile(dest)
+        val stream=atomic.startWrite()
+        try {
+            stream.write(contents.toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(stream)
+        } catch (e:Exception) {
+            atomic.failWrite(stream)
+            throw e
         }
     }
     private fun encodeDoc(d: LibraryDoc) = JSONObject().put("id",d.id).put("title",d.title)

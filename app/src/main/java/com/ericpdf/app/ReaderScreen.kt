@@ -377,17 +377,21 @@ private fun SidePanel(
                             Text(humanTime(session.durationMs),fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
                             IconButton(onClick={
                                 try {
-                                    if(playingId==session.id && player?.isPlaying==true) { player?.pause();playingId=null }
-                                    else {
-                                        player?.release()
+                                    val existing=player
+                                    if(playingId==session.id && existing!=null) {
+                                        if(existing.isPlaying) existing.pause() else existing.start()
+                                    } else {
+                                        existing?.release()
                                         player=MediaPlayer().apply {
                                             setDataSource(lib.recordingFile(doc.id,session.id).absolutePath)
-                                            prepare();start()
+                                            prepare()
+                                            setOnCompletionListener { playingId=null }
+                                            start()
                                         }
                                         playingId=session.id
                                     }
                                 } catch(e:Exception) {playingId=null;player?.release();player=null}
-                            }) {Icon(if(playingId==session.id) Icons.Default.Pause else Icons.Default.PlayArrow,"Play / Pause")}
+                            }) {Icon(if(playingId==session.id && player?.isPlaying==true) Icons.Default.Pause else Icons.Default.PlayArrow,"Play / Pause")}
                             IconButton(onClick={onExportText(session.id)}) {Icon(Icons.Default.Description,"Save transcript TXT")}
                             IconButton(onClick={onExportAudio(session.id)}) {Icon(Icons.Default.FileDownload,"Save lecture WAV")}
                             IconButton(onClick={confirmDelete=session}) {Icon(Icons.Default.DeleteOutline,"Delete recording")}

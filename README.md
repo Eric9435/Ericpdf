@@ -20,6 +20,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Transcript | Search, correct recognized text, jump to transcript's page/timestamp |
 | Exports | Save annotated PDF (rasterized pages), export transcripts as `.txt`, save original lecture WAV files |
 | Data locality | No account, no analytics, no backend, no `INTERNET` permission, no cloud upload |
+| Backup / restore | Manual local ZIP export and import of PDFs, annotations, typed notes and WAV/transcript sessions; Vosk language models excluded |
 
 > **Status:** A substantial first source-code implementation, **not a tested production release**. This environment does not have Android SDK/Gradle distribution or an emulator, so no APK was compiled and no hardware/microphone test was performed here. The CI workflow can compile the code and surface any remaining issues once placed in a repository.
 
@@ -50,6 +51,10 @@ Alternatively, push the project to GitHub and run the included **Android debug A
 5. Return to the PDF and tap **Record**. **Obtain your lecturer's permission before recording.** The app asks for microphone permission and places a persistent recording notification. Annotate the PDF as the professor speaks.
 6. Tap **Stop**. Open **Transcript**. You can play the lecture, select recognized phrases to jump to the recording/time/page, fix transcript errors, and save as TXT or WAV. If no model was available during recording, install it then select **Transcribe offline**.
 7. Tap the share/export icon in the reader toolbar to export a visually annotated PDF.
+
+## Local backup and restore
+
+Use **Back up** on the library screen to create an `EricPDF-backup-*.zip` archive using Android's file picker. This includes original PDFs, handwritten ink, page notes, bookmarks, recorded WAV audio, transcripts, and page timeline cues. Use **Restore** to import that ZIP later; documents whose IDs already exist are skipped, not overwritten. Imported speech models are excluded. Test restoration before removing the app, and keep a backup outside of app-private storage. **The ZIP is not encrypted** and may contain sensitive lecture recordings; store it securely.
 
 ## Storage details
 

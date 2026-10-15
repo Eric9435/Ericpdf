@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -69,13 +70,13 @@ private fun MainApp() {
     val lib=remember { LocalLibrary(context.applicationContext) }
     val scope=rememberCoroutineScope()
     var docs by remember { mutableStateOf(lib.list()) }
-    var activeId by remember { mutableStateOf<String?>(null) }
+    var activeId by rememberSaveable { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var speechLanguage by remember { mutableStateOf("en") }
+    var speechLanguage by rememberSaveable { mutableStateOf("en") }
     var modelStatus by remember { mutableStateOf(0) }
     var recording by remember { mutableStateOf(RecordingUiState()) }
-    var importCourse by remember { mutableStateOf("Unsorted") }
+    var importCourse by rememberSaveable { mutableStateOf("Unsorted") }
     var pendingDelete by remember { mutableStateOf<LibraryDoc?>(null) }
     var exportId by remember { mutableStateOf<String?>(null) }
     var transcriptExport by remember { mutableStateOf<Pair<String,String>?>(null) }
@@ -166,6 +167,27 @@ private fun MainApp() {
             finally {busy=false}
         }
     }
+    val backupPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if(uri != null) scope.launch {
+            busy=true
+            try {
+                withContext(Dispatchers.IO) { LocalBackup.export(context,uri) }
+                toast="Local backup saved. Keep your ZIP somewhere safe."
+            } catch (e:Exception) { toast=e.message ?: "Backup failed" }
+            finally { busy=false }
+        }
+    }
+    val restorePicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if(uri != null) scope.launch {
+            busy=true
+            try {
+                val result=withContext(Dispatchers.IO) { LocalBackup.restore(context,uri) }
+                refresh()
+                toast="Restored ${result.imported} document(s); skipped ${result.skipped} existing document(s)"
+            } catch (e:Exception) { toast=e.message ?: "Restore failed" }
+            finally { busy=false }
+        }
+    }
     val micLauncher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if(allowed && activeId!=null) {
             context.startForegroundService(Intent(context,LectureRecorderService::class.java).apply {
@@ -182,6 +204,8 @@ private fun MainApp() {
                 onLanguage={speechLanguage=it},onCourse={importCourse=it},
                 onOpen={activeId=it},onImport={pdfPicker.launch(arrayOf("application/pdf"))},
                 onModel={modelPicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
+                onBackup={backupPicker.launch("EricPDF-backup-${System.currentTimeMillis()}.zip")},
+                onRestore={restorePicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
                 onDelete={pendingDelete=it},onClearNotice={toast=""})
         } else {
             val item=docs.firstOrNull { it.id==activeId }
@@ -270,7 +294,8 @@ fun humanTime(ms:Long):String {
 private fun HomeScreen(
     docs:List<LibraryDoc>,busy:Boolean,language:String,course:String,hasModel:Boolean,notice:String,
     onLanguage:(String)->Unit,onCourse:(String)->Unit,onOpen:(String)->Unit,
-    onImport:()->Unit,onModel:()->Unit,onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
+    onImport:()->Unit,onModel:()->Unit,onBackup:()->Unit,onRestore:()->Unit,
+    onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
@@ -304,12 +329,28 @@ private fun HomeScreen(
                 }
                 Spacer(Modifier.height(8.dp))
             }
-            Text("LECTURE LIBRARY",style=MaterialTheme.typography.labelMedium,color=Accent,fontWeight=FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("LECTURE LIBRARY",style=MaterialTheme.typography.labelMedium,color=Accent,fontWeight=FontWeight.Bold,
+                    modifier=Modifier.weight(1f))
+                Text("${docs.size} PDF${if(docs.size==1) "" else "s"}",style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+            }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick=onBackup,enabled=!busy) {
+                    Icon(Icons.Default.SaveAlt,null,Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp));Text("Back up")
+                }
+                OutlinedButton(onClick=onRestore,enabled=!busy) {
+                    Icon(Icons.Default.Unarchive,null,Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp));Text("Restore")
+                }
+            }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(value=query,onValueChange={query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,
                 leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Find PDF or course")})
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
                 FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("English ASR")})
                 FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("Deutsch ASR")})
                 Text(if(hasModel) "Model ready" else "Model needed",style=MaterialTheme.typography.labelSmall,
