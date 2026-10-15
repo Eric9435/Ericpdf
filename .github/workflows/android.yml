@@ -72,11 +72,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # Ubuntu hosted runners already contain Android command-line tools.
+      # Avoid setup-android@v3, which attempts to install removed 'tools' package.
       - name: Install Android API 36
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+        shell: bash
+        run: |
+          command -v sdkmanager
+          sdkmanager --version
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
