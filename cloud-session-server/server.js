@@ -1,40 +1,91 @@
 import http from "node:http";
-import {timingSafeEqual} from "node:crypto";
-const key=process.env.OPENAI_API_KEY;
-const pass=process.env.ERICPDF_ACCESS_TOKEN;
-if(!key||!pass||pass.length<24){console.error("OPENAI_API_KEY and 24+ character ERICPDF_ACCESS_TOKEN required");process.exit(1);}
-const counts=new Map();
-function json(res,status,data){res.writeHead(status,{"Content-Type":"application/json","Cache-Control":"no-store"});res.end(JSON.stringify(data));}
+import { timingSafeEqual } from "node:crypto";
+
+const apiKey=process.env.OPENROUTER_API_KEY;
+const accessCode=process.env.ERICPDF_ACCESS_TOKEN;
+const model=process.env.OPENROUTER_STT_MODEL || "openai/whisper-large-v3-turbo";
+const maxDailySeconds=Number(process.env.ERICPDF_MAX_DAILY_AUDIO_SECONDS || 7200);
+if(!apiKey || !accessCode || accessCode.length<24) {
+  console.error("OPENROUTER_API_KEY and ERICPDF_ACCESS_TOKEN (24+ chars) required");
+  process.exit(1);
+}
+const requestCounts=new Map();
+let daily={day:new Date().toISOString().slice(0,10),seconds:0};
+function respond(res,status,payload) {
+  res.writeHead(status,{"Content-Type":"application/json","Cache-Control":"no-store",
+    "X-Content-Type-Options":"nosniff"});
+  res.end(JSON.stringify(payload));
+}
+function authorized(header) {
+  const supplied=Buffer.from((header||"").replace(/^Bearer /i,""));
+  const expected=Buffer.from(accessCode);
+  return supplied.length===expected.length && timingSafeEqual(supplied,expected);
+}
 http.createServer(async(req,res)=>{
-  if(req.url==="/health"&&req.method==="GET")return json(res,200,{ok:true});
-  if(req.url!=="/session"||req.method!=="POST")return json(res,404,{error:"Not found"});
+  if(req.url==="/health" && req.method==="GET")
+    return respond(res,200,{ok:true,provider:"OpenRouter"});
+  if(req.url!=="/transcribe" || req.method!=="POST")
+    return respond(res,404,{error:"Not found"});
+  if(!authorized(req.headers.authorization))
+    return respond(res,401,{error:"Authorization required"});
+
   const ip=req.socket.remoteAddress||"unknown",now=Date.now();
-  const prior=counts.get(ip)||{since:now,count:0};
-  const state=now-prior.since>60000?{since:now,count:0}:prior;
-  state.count++;counts.set(ip,state);
-  if(state.count>10)return json(res,429,{error:"Rate limited"});
-  const provided=Buffer.from((req.headers.authorization||"").replace(/^Bearer /i,""));
-  const expected=Buffer.from(pass);
-  if(provided.length!==expected.length||!timingSafeEqual(provided,expected))return json(res,401,{error:"Unauthorized"});
+  const previous=requestCounts.get(ip)||{time:now,count:0};
+  const state=now-previous.time>60000?{time:now,count:0}:previous;
+  state.count++;requestCounts.set(ip,state);
+  if(state.count>18)return respond(res,429,{error:"Request rate limited"});
+  if(Number(req.headers["content-length"]||0)>850000)
+    return respond(res,413,{error:"Audio too large"});
+
   try {
     let raw="";
-    for await(const chunk of req){raw+=chunk.toString();if(raw.length>1024)return json(res,413,{error:"Too large"});}
-    const language=JSON.parse(raw||"{}").language;
-    if(!["en","de"].includes(language))return json(res,400,{error:"Invalid language"});
-    const body={expires_after:{anchor:"created_at",seconds:60},
-      session:{type:"transcription",audio:{input:{
-        format:{type:"audio/pcm",rate:24000},
-        transcription:{model:"gpt-live-transcribe",languages:[language]},
-        turn_detection:null
-      }}}};
-    const upstream=await fetch("https://api.openai.com/v1/realtime/client_secrets",{
+    for await(const block of req){
+      raw+=block.toString("utf8");
+      if(raw.length>850000)return respond(res,413,{error:"Audio too large"});
+    }
+    const body=JSON.parse(raw||"{}");
+    if(!["en","de"].includes(body.language) || typeof body.audio!=="string" ||
+      body.audio.length>800000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body.audio))
+      return respond(res,400,{error:"Invalid audio"});
+
+    const wav=Buffer.from(body.audio,"base64");
+    if(wav.length<32044 || wav.length>420044 ||
+      wav.toString("ascii",0,4)!=="RIFF" ||
+      wav.toString("ascii",8,12)!=="WAVE" ||
+      wav.toString("ascii",36,40)!=="data" ||
+      wav.readUInt16LE(20)!==1 || wav.readUInt16LE(22)!==1 ||
+      wav.readUInt32LE(24)!==16000 || wav.readUInt16LE(34)!==16 ||
+      wav.readUInt32LE(40)!==wav.length-44)
+      return respond(res,400,{error:"Expected 16kHz mono PCM WAV"});
+
+    const seconds=(wav.length-44)/32000;
+    const today=new Date().toISOString().slice(0,10);
+    if(today!==daily.day)daily={day:today,seconds:0};
+    if(daily.seconds+seconds>maxDailySeconds)
+      return respond(res,429,{error:"Daily usage limit reached"});
+    daily.seconds+=seconds;
+
+    const upstream=await fetch("https://openrouter.ai/api/v1/audio/transcriptions",{
       method:"POST",
-      headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
-      body:JSON.stringify(body),signal:AbortSignal.timeout(10000)
+      headers:{"Authorization":"Bearer "+apiKey,"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model,input_audio:{data:body.audio,format:"wav"},
+        language:body.language,response_format:"json"
+      }),
+      signal:AbortSignal.timeout(40000)
     });
-    if(!upstream.ok){console.error("Upstream status",upstream.status);return json(res,502,{error:"Token service unavailable"});}
-    const result=await upstream.json();
-    if(typeof result.value!=="string"||!result.value.startsWith("ek_"))return json(res,502,{error:"Unexpected upstream response"});
-    return json(res,200,{value:result.value,expires_at:result.expires_at});
-  }catch(error){console.error("Cloud token error",error?.name);return json(res,502,{error:"Cloud token error"});}
-}).listen(Number(process.env.PORT||10000),"0.0.0.0");
+    if(!upstream.ok) {
+      console.error("OpenRouter STT status:",upstream.status);
+      return respond(res,502,{error:"OpenRouter transcription failed"});
+    }
+    const transcript=await upstream.json();
+    if(typeof transcript.text!=="string")
+      return respond(res,502,{error:"No transcript returned"});
+    return respond(res,200,{text:transcript.text.slice(0,20000),sequence:body.sequence||0});
+  } catch(error) {
+    console.error("STT proxy error:",error?.name||"unknown");
+    return respond(res,502,{error:"Cloud transcription unavailable"});
+  }
+}).listen(Number(process.env.PORT||10000),"0.0.0.0",()=>{
+  console.log("EricPDF OpenRouter transcription proxy listening");
+});
