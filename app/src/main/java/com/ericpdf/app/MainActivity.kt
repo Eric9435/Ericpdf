@@ -75,6 +75,9 @@ private fun MainApp() {
     var activeId by rememberSaveable { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var backupEnabled by remember { mutableStateOf(AutoBackup.hasFolder(context)) }
+    var backupRevision by remember { mutableIntStateOf(0) }
+    var pendingAutoRestore by remember { mutableStateOf<Uri?>(null) }
     var speechLanguage by rememberSaveable { mutableStateOf("en") }
     var cloudMode by rememberSaveable { mutableStateOf(false) }
     var cloudEndpoint by rememberSaveable { mutableStateOf("") }
@@ -233,6 +236,20 @@ private fun MainApp() {
             finally { busy=false }
         }
     }
+    val autoFolderPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if(uri!=null) scope.launch {
+            busy=true
+            try {
+                withContext(Dispatchers.IO) { AutoBackup.chooseFolder(context,uri) }
+                backupEnabled=true
+                backupRevision++
+                val previous=withContext(Dispatchers.IO) { AutoBackup.newest(context) }
+                if(docs.isEmpty() && previous!=null) pendingAutoRestore=previous.uri
+                toast="Automatic local backup enabled. The selected Documents folder survives app uninstall."
+            } catch(e:Exception) { toast=e.message ?: "Could not grant backup folder access" }
+            finally {busy=false}
+        }
+    }
     val micLauncher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if(allowed && activeId!=null) {
             context.startForegroundService(Intent(context,LectureRecorderService::class.java).apply {
@@ -259,6 +276,34 @@ private fun MainApp() {
                 onModel={modelPicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
                 onBackup={backupPicker.launch("EricPDF-backup-${System.currentTimeMillis()}.zip")},
                 onRestore={restorePicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},
+                autoEnabled=backupEnabled,autoLastSuccess=backupRevision.let {AutoBackup.lastSuccess(context)},
+                autoError=AutoBackup.lastError(context),
+                onSelectAutoFolder={autoFolderPicker.launch(null)},
+                onAutoBackupNow={
+                    scope.launch {
+                        busy=true
+                        try {
+                            withContext(Dispatchers.IO){AutoBackup.snapshot(context)}
+                            backupRevision++
+                            toast="Automatic backup ZIP saved in your chosen Documents folder"
+                        } catch(e:Exception) {toast=e.message ?: "Automatic backup failed"}
+                        finally {busy=false}
+                    }
+                },
+                onRestoreAutoLatest={
+                    scope.launch {
+                        try {
+                            pendingAutoRestore=withContext(Dispatchers.IO){
+                                AutoBackup.newest(context)?.uri
+                            }
+                            if(pendingAutoRestore==null)toast="No EricPDF auto-backup ZIP in this folder"
+                        } catch(e:Exception) {toast=e.message ?: "Cannot list backup folder"}
+                    }
+                },
+                onDisableAuto={
+                    AutoBackup.disconnect(context);backupEnabled=false;backupRevision++
+                    toast="Auto backup disabled. Existing backup ZIP files were not deleted."
+                },
                 onDelete={pendingDelete=it},onClearNotice={toast=""})
         } else {
             val item=docs.firstOrNull { it.id==activeId }
@@ -314,6 +359,26 @@ private fun MainApp() {
         }
         if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     }
+    if(pendingAutoRestore!=null) AlertDialog(
+        onDismissRequest={pendingAutoRestore=null},
+        title={Text("Restore latest local backup?")},
+        text={Text("Import PDFs, handwritten notes, transcripts and lecture WAV recordings from your chosen folder. Existing document IDs are skipped, not overwritten. The ZIP stays in Documents even after uninstall.")},
+        confirmButton={TextButton(onClick={
+            val uri=pendingAutoRestore
+            pendingAutoRestore=null
+            if(uri!=null) scope.launch {
+                busy=true
+                try {
+                    val result=withContext(Dispatchers.IO){LocalBackup.restore(context,uri)}
+                    refresh()
+                    AutoBackup.changed(context,now=true)
+                    toast="Restored ${result.imported} document(s), skipped ${result.skipped} already present"
+                } catch(e:Exception){toast=e.message ?: "Restore failed"}
+                finally {busy=false}
+            }
+        }){Text("Restore latest")}},
+        dismissButton={TextButton(onClick={pendingAutoRestore=null}){Text("Cancel")}}
+    )
     if(confirmRecording) AlertDialog(onDismissRequest={confirmRecording=false},
         title={Text("Recording permission")},
         text={Text(if(cloudMode)
@@ -361,6 +426,9 @@ private fun HomeScreen(
     onLanguage:(String)->Unit,onCourse:(String)->Unit,onOpen:(String)->Unit,
     onImport:()->Unit,onModel:()->Unit,onDownloadModel:()->Unit,
     onBackup:()->Unit,onRestore:()->Unit,
+    autoEnabled:Boolean,autoLastSuccess:Long,autoError:String,
+    onSelectAutoFolder:()->Unit,onAutoBackupNow:()->Unit,onRestoreAutoLatest:()->Unit,
+    onDisableAuto:()->Unit,
     onDelete:(LibraryDoc)->Unit,onClearNotice:()->Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -422,6 +490,49 @@ private fun HomeScreen(
                 OutlinedButton(onClick=onRestore,enabled=!busy) {
                     Icon(Icons.Default.Unarchive,null,Modifier.size(17.dp))
                     Spacer(Modifier.width(5.dp));Text("Restore")
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Card(colors=CardDefaults.cardColors(containerColor=Color.White),
+                shape=RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Icon(Icons.Default.FolderCopy,null,tint=Accent,modifier=Modifier.size(22.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Automatic local backup",fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+                        Text(if(autoEnabled) "ON" else "OFF",
+                            color=if(autoEnabled) Color(0xFF18784C) else Color.Gray,
+                            style=MaterialTheme.typography.labelMedium,fontWeight=FontWeight.Bold)
+                    }
+                    Text(if(autoEnabled) "Backups remain in your selected Documents folder when EricPDF is uninstalled."
+                        else "Choose a shared Documents folder once. EricPDF saves restorable ZIPs there automatically, without Firebase.",
+                        style=MaterialTheme.typography.bodySmall)
+                    if(autoEnabled) {
+                        Text(if(autoLastSuccess>0L)
+                            "Last successful backup: ${DateFormat.getDateTimeInstance().format(Date(autoLastSuccess))}"
+                            else "No successful automatic backup yet.",
+                            color=Color.Gray,style=MaterialTheme.typography.labelSmall)
+                        if(autoError.isNotBlank()) Text("Backup warning: $autoError",
+                            color=Color(0xFFAF4A21),style=MaterialTheme.typography.labelSmall)
+                    }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick=onSelectAutoFolder,enabled=!busy) {
+                            Text(if(autoEnabled) "Change folder" else "Choose backup folder")
+                        }
+                        if(autoEnabled) {
+                            OutlinedButton(onClick=onAutoBackupNow,enabled=!busy && docs.isNotEmpty()) {
+                                Text("Backup now")
+                            }
+                            OutlinedButton(onClick=onRestoreAutoLatest,enabled=!busy) {
+                                Text("Restore latest")
+                            }
+                            TextButton(onClick=onDisableAuto,enabled=!busy) {Text("Turn off")}
+                        }
+                    }
+                    Text("After reinstalling, choose the SAME folder again to restore. Local files are not protected from phone loss or factory reset. ZIPs are unencrypted.",
+                        color=Color.Gray,style=MaterialTheme.typography.labelSmall)
                 }
             }
             Spacer(Modifier.height(8.dp))
