@@ -36,6 +36,7 @@ private val InkNavy=Color(0xFF152A48)
 @Composable
 fun FolderLibraryScreen(
     lib:LocalLibrary,docs:List<LibraryDoc>,folders:List<LibraryFolder>,
+    folderId:String?,onFolderChange:(String?)->Unit,
     notice:String,busy:Boolean,onOpen:(String)->Unit,onImport:(String?)->Unit,
     onSettings:()->Unit,onCreateFolder:(String,String?)->Unit,
     onRenameFolder:(String,String)->Unit,onMoveFolder:(String,String?)->Unit,
@@ -43,7 +44,6 @@ fun FolderLibraryScreen(
     onRenameDoc:(String,String)->Unit,onDeleteDoc:(LibraryDoc)->Unit,
     onDismissNotice:()->Unit
 ) {
-    var folderId by rememberSaveable {mutableStateOf<String?>(null)}
     var query by rememberSaveable {mutableStateOf("")}
     var sort by rememberSaveable {mutableStateOf("Recent")}
     var grid by rememberSaveable {mutableStateOf(true)}
@@ -58,9 +58,9 @@ fun FolderLibraryScreen(
     val context=LocalContext.current
     val index=remember(folders){folders.associateBy{it.id}}
     LaunchedEffect(folders,folderId) {
-        if(folderId!=null && folderId !in index) folderId=null
+        if(folderId!=null && folderId !in index) onFolderChange(null)
     }
-    BackHandler(enabled=folderId!=null) {folderId=index[folderId]?.parentId}
+    BackHandler(enabled=folderId!=null) {onFolderChange(index[folderId]?.parentId)}
     val searching=query.isNotBlank()
     val currentFolders=if(searching) folders.filter {it.name.contains(query,true)}
         else folders.filter {it.parentId==folderId}
@@ -102,13 +102,13 @@ fun FolderLibraryScreen(
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     verticalAlignment=Alignment.CenterVertically) {
-                    TextButton(onClick={folderId=null}) {
+                    TextButton(onClick={onFolderChange(null)}) {
                         Icon(Icons.Default.Home,null,Modifier.size(17.dp))
                         Text(" Documents")
                     }
                     breadcrumbs.forEach {entry->
                         Icon(Icons.Default.ChevronRight,null,Modifier.size(18.dp),tint=Color.Gray)
-                        TextButton(onClick={folderId=entry.id}) {
+                        TextButton(onClick={onFolderChange(entry.id)}) {
                             Text(entry.name,maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
                     }
@@ -151,7 +151,6 @@ fun FolderLibraryScreen(
             }
             IconButton(onClick={grid=!grid}) {Icon(if(grid) Icons.Default.ViewList else Icons.Default.GridView,"Toggle grid / list")}
         }
-        val nCols=if(grid) 3 else 1
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val cols=if(!grid) 1 else if(maxWidth>=600.dp) 3 else if(maxWidth>=380.dp) 2 else 1
             LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=12.dp,end=12.dp,bottom=90.dp),
@@ -161,7 +160,7 @@ fun FolderLibraryScreen(
                     items(sortedFolders.chunked(cols)) {rowFolders->
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                             rowFolders.forEach {f->
-                                FolderTile(f,Modifier.weight(1f),onOpen={folderId=f.id},
+                                FolderTile(f,Modifier.weight(1f),onOpen={onFolderChange(f.id)},
                                     onRename={editingFolder=f;renameValue=f.name},
                                     onMove={moveFolder=f},onDelete={deleteFolder=f})
                             }
