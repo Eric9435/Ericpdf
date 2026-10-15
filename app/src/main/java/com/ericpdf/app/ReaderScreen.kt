@@ -354,6 +354,7 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
         val minDistance=94.dp.toPx()
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed=false)
+            multiTouchInk=false
             var total=Offset.Zero
             var sawPair=false
             var hadPinch=false
@@ -414,7 +415,6 @@ private fun ReaderPage(doc:LibraryDoc,lib:LocalLibrary,page:Int,tool:PenTool,col
                     (p.y/pageSize.height.coerceAtLeast(1)).coerceIn(0f,1f))
                 detectDragGestures(
                     onDragStart={pt ->
-                        multiTouchInk=false
                         if(tool==PenTool.ERASE) {
                             val where=toNorm(pt)
                             val next=eraseClosest(strokes,where)
