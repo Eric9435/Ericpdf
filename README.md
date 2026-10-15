@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.4.0)
+## Implemented in this source project (v0.5.0)
 
 | Feature | Implementation |
 |---|---|
@@ -22,7 +22,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Transcript | Search, correct recognized text, jump to transcript's page/timestamp |
 | Exports | Save annotated PDF (rasterized pages), export transcripts as `.txt`, save original lecture WAV files |
 | Data locality | Original PDFs, audio recordings and notes remain local. Optional online mode sends short mic audio chunks via an authenticated HTTPS proxy to OpenRouter; Offline mode does not transmit audio. |
-| Backup / restore | Manual local ZIP export and import of PDFs, annotations, typed notes and WAV/transcript sessions; Vosk language models excluded |
+| Backup / restore | Manual ZIP export/restore and optional automatic local backups to user-selected Android Documents folder (Storage Access Framework). Worker schedules after edits, after completed recording and every 6 hours; last 3 automatic snapshots kept. |
 
 > **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
 
@@ -134,3 +134,44 @@ and Offline mode with Vosk still requires no network access.
 missing. If transcription fails, the WAV continues recording, but those
 failed cloud segments will not automatically transcribe. Real-device tests
 with long German/English lectures are required.
+
+## Automatic local backups — no Firebase (v0.5.0)
+
+The original working library remains private inside EricPDF, for fast annotation.
+To protect it from **uninstall**, choose a **shared Documents folder** in the
+Android file picker, such as `Documents/EricPDF Backups` (create one from the
+picker). Do **not** choose Android/data or an app-private folder.
+
+From the EricPDF home screen:
+
+1. Tap **Choose backup folder** and choose/create a folder under **Documents**.
+2. Tap **Use this folder** (Android's system folder-access approval).
+3. EricPDF schedules a ZIP snapshot after data changes (coalesced to reduce
+   battery/storage usage), at the end of a recording, and periodically every
+   6 hours while Android permits background work. **Android may delay a
+   scheduled snapshot** when the device is idle or conserving battery.
+4. **Backup now** immediately makes a new ZIP snapshot, after recordings finish.
+   You can confirm the **Last successful backup** date and look for files named
+   `EricPDF-auto-YYYYMMDD-HHMMSS-SSS.zip` in your chosen folder.
+5. Only after a **successful backup**, you can safely uninstall and reinstall
+   EricPDF **without losing the backed-up state**. Never assume unbacked-up
+   edits will survive uninstall!
+6. After reinstall, pick the **same shared Documents folder** again. EricPDF
+   will offer **Restore latest** when its working library is empty. You can
+   also tap **Restore latest** manually or choose an existing ZIP through
+   the original Restore picker. Existing document IDs are skipped, not overwritten.
+7. ZIP files survive normal uninstall, provided the chosen storage provider
+   keeps them. Android **revokes the old folder permission when the app is
+   uninstalled**, so a new installation must select the folder again.
+8. EricPDF retains at most **3** automatically created snapshot ZIPs (the
+   manual exports are never deleted). This requires enough free device storage
+   for the new ZIP in addition to existing backups. Vosk language models are
+   intentionally excluded and may need reimport/download.
+
+**No online sync:** Local ZIP backups are **not** cross-device replication,
+and cannot survive phone loss, storage damage, factory reset, or deletion of
+the Documents folder unless you separately copy them to another device.
+**Not encrypted:** ZIP files include PDF documents, private notes and WAV
+recordings. Store the chosen folder securely and do not share these files
+unintentionally. Backups are best-effort, NOT synchronous per-keystroke
+transactions; test restoring a ZIP before uninstalling.
