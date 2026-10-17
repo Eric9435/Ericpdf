@@ -11,13 +11,13 @@ class TranscriptStitcherTest {
             TranscriptStitcher.removeOverlap("", "The synchronous generator has inertia."))
     }
     @Test fun removesRepeatedBoundaryWordsWithPunctuation() {
-        assertEquals("reactive power flow.",
+        assertEquals("power flow.",
             TranscriptStitcher.removeOverlap(
                 "The synchronous machine controls the reactive",
                 "the reactive power flow."))
     }
     @Test fun handlesAccentedGermanTerms() {
-        assertEquals("mit großer Spannung",
+        assertEquals("großer Spannung",
             TranscriptStitcher.removeOverlap(
                 "Die Übertragung erfolgt mit",
                 "erfolgt mit großer Spannung"))
