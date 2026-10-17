@@ -95,6 +95,7 @@ private fun MainApp() {
     var pendingDelete by remember { mutableStateOf<LibraryDoc?>(null) }
     var exportId by remember { mutableStateOf<String?>(null) }
     var transcriptExport by remember { mutableStateOf<Pair<String,String>?>(null) }
+    var finalPdfExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var liveNotesExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var audioExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -143,10 +144,12 @@ private fun MainApp() {
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
                     intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
                     displayedPartial)
-                if (event=="model_error" || event=="model_missing" || event=="cloud_error" || event=="error") {
+                if (event in setOf("model_error","model_missing","cloud_error","final_export_error",
+                        "transcript_empty","error")) {
                     toast=recording.error
                 }
-                if (isFinished || event=="transcript") refreshKey++
+                if (isFinished || event=="transcript" || event=="final_ready") refreshKey++
+                if(event=="final_ready") toast="Final transcript PDF and TXT saved privately in EricPDF"
                 if(event=="stopped" && prior.docId != null) refresh()
             }
         }
@@ -191,11 +194,30 @@ private fun MainApp() {
             try {
                 withContext(Dispatchers.IO) {
                     val s=lib.getSession(request.first,request.second) ?: error("Session missing")
-                    val text=s.segments.joinToString("\n") { "[${humanTime(it.startMs)}] ${it.text}" }
+                    val text=FinalLectureDocument.plainText(lib.get(request.first),s)
+                    require(text.isNotBlank()) { "No finalized recognized words to export" }
                     context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(text) } ?: error("Export destination unavailable")
                 }
                 toast="Transcript saved"
             } catch(e:Exception){toast=e.message ?: "Transcript export failed"}
+        }
+    }
+    val finalPdfPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val request=finalPdfExport; finalPdfExport=null
+        if(uri!=null && request!=null) scope.launch {
+            busy=true
+            try {
+                withContext(Dispatchers.IO) {
+                    val session=lib.getSession(request.first,request.second) ?: error("Lecture session missing")
+                    require(FinalLectureDocument.hasWords(session)) { "No finalized words to export" }
+                    val source=FinalLectureDocument.renderPdf(lib,request.first,session)
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        source.inputStream().use { input -> input.copyTo(output) }
+                    } ?: error("Cannot create output PDF")
+                }
+                toast="Final lecture transcript PDF exported"
+            } catch(e:Exception) {toast=e.message ?: "Could not export final PDF"}
+            finally {busy=false}
         }
     }
     val notesPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -348,7 +370,11 @@ private fun MainApp() {
                 onBack={activeId=null;refresh()},
                 onLanguage={speechLanguage=it},onMessage={toast=it},
                 onExport={exportId=item.id;exportPicker.launch(item.title.substringBeforeLast('.')+"-annotated.pdf")},
-                onExportText={sessionId -> transcriptExport=item.id to sessionId; textPicker.launch("${item.title}-${sessionId.take(8)}.txt")},
+                onExportText={sessionId -> transcriptExport=item.id to sessionId; textPicker.launch("${item.title}-final-transcript-${sessionId.take(8)}.txt")},
+                onExportFinalPdf={sessionId ->
+                    finalPdfExport=item.id to sessionId
+                    finalPdfPicker.launch("${item.title}-final-transcript-${sessionId.take(8)}.pdf")
+                },
                 onExportLiveNotes={sessionId ->
                     liveNotesExport=item.id to sessionId
                     notesPicker.launch("${item.title}-lecture-notes-${sessionId.take(8)}.txt")
