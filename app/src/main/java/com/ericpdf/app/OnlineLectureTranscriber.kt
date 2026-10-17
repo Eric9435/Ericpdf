@@ -147,7 +147,7 @@ class OnlineLectureTranscriber(
             val tail = pcm.toByteArray()
             pcm.reset()
             // Don't send only the overlapping context again.
-            if (windowStartBytes + tail.size - lastQueuedEndBytes >= MIN_BYTES) {
+            if (tail.size >= MIN_BYTES && windowStartBytes + tail.size - lastQueuedEndBytes >= FINAL_NEW_BYTES) {
                 submit(tail, windowStartBytes, windowStartBytes + tail.size)
             }
         }
@@ -168,6 +168,7 @@ class OnlineLectureTranscriber(
         const val CHUNK_BYTES = 8 * 16000 * 2
         const val OVERLAP_BYTES = 2 * 16000 * 2
         const val MIN_BYTES = 16000 * 2
+        private const val FINAL_NEW_BYTES = 16000 / 2 // 250 ms of genuinely new audio
         private const val MAX_PENDING_CHUNKS = 16
 
         fun isNearSilence(pcm: ByteArray): Boolean {
