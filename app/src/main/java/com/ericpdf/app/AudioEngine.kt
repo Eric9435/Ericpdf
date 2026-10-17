@@ -212,9 +212,22 @@ class LectureRecorderService : Service() {
             runCatching { cloud?.finish() }
             runCatching { recognizer?.close(); model?.close() }
             runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
-            runCatching { synchronized(segments) {
-                persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
-            } }
+            val finalized = synchronized(segments) {
+                val snapshot = segments.toList()
+                runCatching { persistTranscriptAndNotes(id,session,totalBytes/32L,snapshot) }
+                session.copy(durationMs=totalBytes/32L,segments=snapshot)
+            }
+            if (FinalLectureDocument.hasWords(finalized)) {
+                runCatching { FinalLectureDocument.save(library,id,finalized) }
+                    .onSuccess { sendStatus("final_ready", "Final transcript saved as TXT and PDF inside EricPDF") }
+                    .onFailure {
+                        sendStatus("final_export_error",
+                            "The WAV/transcript remain saved, but the document could not be generated: ${it.message}")
+                    }
+            } else if (totalBytes > 0) {
+                sendStatus("transcript_empty",
+                    "Lecture WAV saved, but no speech was recognized. Install a language model and choose Transcribe offline.")
+            }
             // Write the finalized WAV header before scheduling backup.
             // Any pending WorkManager retry can now include the full recording.
             AutoBackup.recording(applicationContext,false)
