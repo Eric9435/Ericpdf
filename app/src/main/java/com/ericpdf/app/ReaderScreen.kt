@@ -506,7 +506,7 @@ private fun SidePanel(
             horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("EN")})
             FilterChip(selected=language=="de",onClick={onLanguage("de")},label={Text("DE")})
-            Text(if(cloudMode) "OpenRouter captions · ~6s chunks" else if(hasModel) "Offline ASR ready" else "Import model for ASR",style=MaterialTheme.typography.labelSmall,
+            Text(if(cloudMode) "Online captions · overlap enabled" else if(hasModel) "Offline ASR ready" else "Import model for ASR",style=MaterialTheme.typography.labelSmall,
                 color=if(cloudMode||hasModel) Color(0xFF2B8A52) else Color(0xFFAF6917),
                 modifier=Modifier.align(Alignment.CenterVertically))
         }
@@ -658,7 +658,7 @@ private fun SidePanel(
                                 Text("LIVE RECOGNITION",fontWeight=FontWeight.Bold,
                                     style=MaterialTheme.typography.labelSmall,color=Color(0xFF275798))
                                 Text(recording.partial.ifBlank {
-                                    if(cloudMode) "Waiting for the next ~6s audio chunk and transcription…" else if(hasModel) "Listening… live words will appear here."
+                                    if(cloudMode) "Listening… cloud captions arrive in batches, not word by word." else if(hasModel) "Listening… live words will appear here."
                                     else "Import an offline EN/DE Vosk model to enable live words."
                                 },style=MaterialTheme.typography.bodyMedium)
                             }
