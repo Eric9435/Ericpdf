@@ -52,6 +52,21 @@ class LocalLibrary(private val context: Context) {
         require(sessionId.matches(Regex("[a-f0-9-]{36}")))
         return File(documentDirectory(docId),"audio/$sessionId-live-notes.txt")
     }
+    private fun finalTranscriptFile(docId:String,sessionId:String):File {
+        require(sessionId.matches(Regex("[a-f0-9-]{36}")))
+        return File(documentDirectory(docId),"audio/$sessionId-final-transcript.txt")
+    }
+    fun finalTranscriptPdfFile(docId:String,sessionId:String):File {
+        require(sessionId.matches(Regex("[a-f0-9-]{36}")))
+        return File(documentDirectory(docId),"audio/$sessionId-final-transcript.pdf")
+    }
+    fun saveFinalTranscript(docId:String,sessionId:String,content:String) =
+        writeAtomic(finalTranscriptFile(docId,sessionId),content)
+    fun readFinalTranscript(docId:String,sessionId:String):String =
+        runCatching { finalTranscriptFile(docId,sessionId).readText() }.getOrDefault("")
+    fun invalidateFinalTranscriptPdf(docId:String,sessionId:String) {
+        finalTranscriptPdfFile(docId,sessionId).delete()
+    }
     fun readGeneratedNotes(docId:String,sessionId:String):String =
         runCatching { generatedNotesFile(docId,sessionId).readText() }.getOrDefault("")
     fun saveGeneratedNotes(docId:String,sessionId:String,content:String) =
@@ -259,6 +274,8 @@ class LocalLibrary(private val context: Context) {
         sessionFile(docId, sessionId).delete()
         cuesFile(docId, sessionId).delete()
         generatedNotesFile(docId, sessionId).delete()
+        finalTranscriptFile(docId, sessionId).delete()
+        finalTranscriptPdfFile(docId, sessionId).delete()
         AutoBackup.changed(context,now=true)
     }
     private fun readArray(file: File) = runCatching { JSONArray(file.readText()) }.getOrDefault(JSONArray())

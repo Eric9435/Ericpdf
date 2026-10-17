@@ -245,8 +245,13 @@ object AudioTranscriber {
         val adjusted=results.map { seg ->
             seg.copy(page=cues.lastOrNull { it.timeMs<=seg.startMs }?.page ?: 0)
         }
+        require(adjusted.any { it.text.isNotBlank() }) {
+            "No words were recognized. Original recording and existing transcript were preserved."
+        }
         val newSession=session.copy(segments=adjusted)
         lib.putSession(docId,newSession)
+        lib.saveGeneratedNotes(docId,session.id,LiveLectureNotes.fromSegments(adjusted))
+        FinalLectureDocument.save(lib,docId,newSession)
         return newSession
     }
 }

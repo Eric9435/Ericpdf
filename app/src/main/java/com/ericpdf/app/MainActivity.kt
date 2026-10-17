@@ -95,6 +95,7 @@ private fun MainApp() {
     var pendingDelete by remember { mutableStateOf<LibraryDoc?>(null) }
     var exportId by remember { mutableStateOf<String?>(null) }
     var transcriptExport by remember { mutableStateOf<Pair<String,String>?>(null) }
+    var finalPdfExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var liveNotesExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var audioExport by remember { mutableStateOf<Pair<String,String>?>(null) }
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -133,15 +134,22 @@ private fun MainApp() {
                 val event=intent.getStringExtra(AudioSignals.FIELD_EVENT) ?: "idle"
                 val isFinished=event=="stopped" || event=="error" || event=="idle"
                 val prior=recording
+                val displayedPartial=when {
+                    isFinished || event=="transcript" -> ""
+                    event=="partial" -> intent.getStringExtra(AudioSignals.FIELD_PARTIAL).orEmpty()
+                    else -> prior.partial // Preserve live captions across recording heartbeats.
+                }
                 recording=RecordingUiState(event,
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_DOC),
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
                     intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
-                    intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "")
-                if (event=="model_error" || event=="model_missing" || event=="cloud_error" || event=="error") {
+                    displayedPartial)
+                if (event in setOf("model_error","model_missing","cloud_error","final_export_error",
+                        "transcript_empty","error")) {
                     toast=recording.error
                 }
-                if (isFinished || event=="transcript") refreshKey++
+                if (isFinished || event=="transcript" || event=="final_ready") refreshKey++
+                if(event=="final_ready") toast="Final transcript PDF and TXT saved privately in EricPDF"
                 if(event=="stopped" && prior.docId != null) refresh()
             }
         }
@@ -186,11 +194,30 @@ private fun MainApp() {
             try {
                 withContext(Dispatchers.IO) {
                     val s=lib.getSession(request.first,request.second) ?: error("Session missing")
-                    val text=s.segments.joinToString("\n") { "[${humanTime(it.startMs)}] ${it.text}" }
+                    val text=FinalLectureDocument.plainText(lib.get(request.first),s)
+                    require(text.isNotBlank()) { "No finalized recognized words to export" }
                     context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(text) } ?: error("Export destination unavailable")
                 }
                 toast="Transcript saved"
             } catch(e:Exception){toast=e.message ?: "Transcript export failed"}
+        }
+    }
+    val finalPdfPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val request=finalPdfExport; finalPdfExport=null
+        if(uri!=null && request!=null) scope.launch {
+            busy=true
+            try {
+                withContext(Dispatchers.IO) {
+                    val session=lib.getSession(request.first,request.second) ?: error("Lecture session missing")
+                    require(FinalLectureDocument.hasWords(session)) { "No finalized words to export" }
+                    val source=FinalLectureDocument.renderPdf(lib,request.first,session)
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        source.inputStream().use { input -> input.copyTo(output) }
+                    } ?: error("Cannot create output PDF")
+                }
+                toast="Final lecture transcript PDF exported"
+            } catch(e:Exception) {toast=e.message ?: "Could not export final PDF"}
+            finally {busy=false}
         }
     }
     val notesPicker=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -343,7 +370,11 @@ private fun MainApp() {
                 onBack={activeId=null;refresh()},
                 onLanguage={speechLanguage=it},onMessage={toast=it},
                 onExport={exportId=item.id;exportPicker.launch(item.title.substringBeforeLast('.')+"-annotated.pdf")},
-                onExportText={sessionId -> transcriptExport=item.id to sessionId; textPicker.launch("${item.title}-${sessionId.take(8)}.txt")},
+                onExportText={sessionId -> transcriptExport=item.id to sessionId; textPicker.launch("${item.title}-final-transcript-${sessionId.take(8)}.txt")},
+                onExportFinalPdf={sessionId ->
+                    finalPdfExport=item.id to sessionId
+                    finalPdfPicker.launch("${item.title}-final-transcript-${sessionId.take(8)}.pdf")
+                },
                 onExportLiveNotes={sessionId ->
                     liveNotesExport=item.id to sessionId
                     notesPicker.launch("${item.title}-lecture-notes-${sessionId.take(8)}.txt")
@@ -599,10 +630,10 @@ private fun HomeScreen(
                             else "Online transcription needs an OpenRouter proxy",
                             style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
                         Text(if(onlineConfigured)
-                            "After recording begins, captions appear in ~6-second batches plus network processing."
+                            "Captions use overlapping 8-second audio windows (then every ~6 seconds), plus network processing."
                             else "1. Deploy the OpenRouter proxy on Render.  2. Add OPENROUTER_API_KEY and a private access code.  3. Enter its HTTPS /transcribe URL and code below.",
                             style=MaterialTheme.typography.bodySmall)
-                        Text("Online mode uploads ~6-second speech chunks to OpenRouter for transcription. Usage may incur charges.",
+                        Text("Online mode uploads overlapping audio windows (~33% extra audio for better word continuity). Usage may incur charges.",
                             style=MaterialTheme.typography.labelSmall,color=Color(0xFF81542C))
                     }
                 }

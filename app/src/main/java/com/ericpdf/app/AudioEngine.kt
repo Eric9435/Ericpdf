@@ -107,8 +107,18 @@ class LectureRecorderService : Service() {
         try {
             val min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             require(min > 0) { "16 kHz microphone capture not available" }
-            audio=AudioRecord(MediaRecorder.AudioSource.MIC,16000,AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,max(8192,min * 2))
+            val speechRecorder=runCatching {
+                AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,
+                    AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
+                    max(8192,min * 2))
+            }.getOrNull()
+            audio=if(speechRecorder?.state==AudioRecord.STATE_INITIALIZED) speechRecorder
+                else {
+                    speechRecorder?.release()
+                    AudioRecord(MediaRecorder.AudioSource.MIC,16000,
+                        AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
+                        max(8192,min * 2))
+                }
             require(audio.state == AudioRecord.STATE_INITIALIZED) { "Unable to initialize microphone" }
             capture=audio
             raf=RandomAccessFile(wav,"rw").also { it.setLength(0); WavFile.writeHeader(it,0L) }
@@ -117,10 +127,13 @@ class LectureRecorderService : Service() {
                 try {
                     cloud=OnlineLectureTranscriber(endpoint,code,session.language,
                         partial={sendStatus("partial",partial=it)},
-                        final={phrase ->
+                        final={phrase, startMs, endMs ->
                             synchronized(segments) {
-                                val end=(SystemClock.elapsedRealtime()-elapsedStart).coerceAtLeast(0)
-                                segments.add(TranscriptSegment(lastSegmentEnd,end,phrase.take(20000),page))
+                                val begin=maxOf(lastSegmentEnd,startMs)
+                                val end=maxOf(begin,endMs)
+                                val recordedPage=library.cues(id,session.id)
+                                    .lastOrNull { it.timeMs<=begin }?.page ?: page
+                                segments.add(TranscriptSegment(begin,end,phrase.take(20000),recordedPage))
                                 lastSegmentEnd=end
                                 persistTranscriptAndNotes(id,session,end,segments)
                             }
@@ -199,9 +212,22 @@ class LectureRecorderService : Service() {
             runCatching { cloud?.finish() }
             runCatching { recognizer?.close(); model?.close() }
             runCatching { raf?.let { WavFile.writeHeader(it,totalBytes); it.close() } }
-            runCatching { synchronized(segments) {
-                persistTranscriptAndNotes(id,session,totalBytes/32L,segments)
-            } }
+            val finalized = synchronized(segments) {
+                val snapshot = segments.toList()
+                runCatching { persistTranscriptAndNotes(id,session,totalBytes/32L,snapshot) }
+                session.copy(durationMs=totalBytes/32L,segments=snapshot)
+            }
+            if (FinalLectureDocument.hasWords(finalized)) {
+                runCatching { FinalLectureDocument.save(library,id,finalized) }
+                    .onSuccess { sendStatus("final_ready", "Final transcript saved as TXT and PDF inside EricPDF") }
+                    .onFailure {
+                        sendStatus("final_export_error",
+                            "The WAV/transcript remain saved, but the document could not be generated: ${it.message}")
+                    }
+            } else if (totalBytes > 0) {
+                sendStatus("transcript_empty",
+                    "Lecture WAV saved, but no speech was recognized. Install a language model and choose Transcribe offline.")
+            }
             // Write the finalized WAV header before scheduling backup.
             // Any pending WorkManager retry can now include the full recording.
             AutoBackup.recording(applicationContext,false)
