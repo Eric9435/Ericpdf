@@ -133,11 +133,16 @@ private fun MainApp() {
                 val event=intent.getStringExtra(AudioSignals.FIELD_EVENT) ?: "idle"
                 val isFinished=event=="stopped" || event=="error" || event=="idle"
                 val prior=recording
+                val displayedPartial=when {
+                    isFinished || event=="transcript" -> ""
+                    event=="partial" -> intent.getStringExtra(AudioSignals.FIELD_PARTIAL).orEmpty()
+                    else -> prior.partial // Preserve live captions across recording heartbeats.
+                }
                 recording=RecordingUiState(event,
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_DOC),
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
                     intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
-                    intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "")
+                    displayedPartial)
                 if (event=="model_error" || event=="model_missing" || event=="cloud_error" || event=="error") {
                     toast=recording.error
                 }
