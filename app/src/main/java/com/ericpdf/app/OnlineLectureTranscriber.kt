@@ -37,6 +37,7 @@ class OnlineLectureTranscriber(
     private var sequence = 0L
     // Only read/written on the single transcription worker.
     private var emittedText = ""
+    private var lastEmittedEndMs = 0L
 
     fun start() {
         val uri = URL(endpoint)
@@ -86,10 +87,10 @@ class OnlineLectureTranscriber(
                 if (novel.isNotBlank()) {
                     emittedText = (emittedText + " " + novel).takeLast(2000)
                     // The start excludes previously confirmed overlapping audio.
-                    val startMs = maxOf(beginBytes / BYTES_PER_MILLISECOND,
-                        (endBytes - (CHUNK_BYTES - OVERLAP_BYTES)) /
-                            BYTES_PER_MILLISECOND)
-                    final(novel, startMs.coerceAtLeast(0), endBytes / BYTES_PER_MILLISECOND)
+                    val startMs = maxOf(beginBytes / BYTES_PER_MILLISECOND, lastEmittedEndMs)
+                    val endMs = maxOf(startMs, endBytes / BYTES_PER_MILLISECOND)
+                    final(novel, startMs, endMs)
+                    lastEmittedEndMs = endMs
                 }
             } catch (ex: Exception) {
                 error("Cloud transcription failed: ${ex.message ?: "network error"}. " +
