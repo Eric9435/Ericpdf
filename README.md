@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.6.0)
+## Implemented in this source project (v0.6.1)
 
 | Feature | Implementation |
 |---|---|
@@ -26,6 +26,16 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Backup / restore | Folder tree metadata is included in ZIP archives; manual ZIP export/restore and optional automatic local backups to user-selected Android Documents folder (Storage Access Framework). Worker schedules after edits, after completed recording and every 6 hours; last 3 automatic snapshots kept. |
 
 > **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
+
+
+## Live-caption accuracy improvements (v0.6.1)
+
+- **Offline:** capture uses Android's speech-recognition microphone profile. Vosk remains local and private. Accuracy still depends strongly on the device, room acoustics, speaking distance and selected Vosk model.
+- **Online:** 8-second PCM windows with 2 seconds of shared context reduce clipped words at window boundaries. After the first result, a new window is sent about every 6 seconds; results are not instantaneous. The overlapping audio can increase billable provider audio duration by about one third.
+- **Reliability:** cloud results are stitched conservatively to remove duplicated words, keep audio-relative timestamps and corresponding slide cues, and use one retry for transient failures. Nearly silent chunks are ignored to reduce invented captions. The full original WAV is still recorded locally.
+- **Visibility:** live text no longer disappears when the recording service emits its routine status heartbeat.
+- **Higher quality offline models:** small auto-downloaded Vosk models are optimized for phone resources, not maximum accuracy. Advanced users can manually import a compatible model from the [Vosk model catalog](https://alphacephei.com/vosk/models), but large desktop/server models may exceed Android memory. A better model is not automatically installed.
+- **Limits:** accuracy has not yet been measured on a real TUHH lecture recording. Online use requires a separately deployed private HTTPS proxy with a server-side provider key; this repository does not itself configure or deploy that service. English and German still require explicit selection. Keep the WAV and review any technical formulas or units against the lecture slides.
 
 ## Navigation and ownership
 
