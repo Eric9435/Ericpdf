@@ -29,6 +29,7 @@ object AudioSignals {
     const val FIELD_SESSION = "sessionId"
     const val FIELD_ELAPSED = "elapsedStart"
     const val FIELD_PARTIAL = "partial"
+    const val FIELD_DURATION = "maxDurationMs"
 }
 
 /** Single mic capture pipeline: the same 16 kHz PCM is written to WAV and passed to Vosk. */
@@ -39,6 +40,7 @@ class LectureRecorderService : Service() {
     private var docId: String? = null
     private var sessionId: String? = null
     private var elapsedStart: Long = 0
+    private var maxDurationMs: Long = 0L
     @Volatile private var page = 0
     private val library by lazy { LocalLibrary(applicationContext) }
 
@@ -57,7 +59,8 @@ class LectureRecorderService : Service() {
                     startCapture(id,lang,intent.getIntExtra("page",0),
                         intent.getBooleanExtra("cloudMode",false),
                         intent.getStringExtra("cloudEndpoint").orEmpty(),
-                        intent.getStringExtra("cloudCode").orEmpty())
+                        intent.getStringExtra("cloudCode").orEmpty(),
+                        intent.getLongExtra(AudioSignals.FIELD_DURATION,0L))
                 } else sendStatus("recording")
             }
             AudioSignals.STOP -> { running = false; capture?.stopSafely() }
@@ -69,7 +72,8 @@ class LectureRecorderService : Service() {
         return START_NOT_STICKY
     }
     private fun startCapture(id:String,lang:String,startingPage:Int,
-        online:Boolean,endpoint:String,code:String) {
+        online:Boolean,endpoint:String,code:String,durationMillis:Long) {
+        maxDurationMs=durationMillis.takeIf { it in 60_000L..28_800_000L } ?: 0L
         if (runCatching { library.get(id) }.isFailure) { sendStatus("error", "Document not found"); stopSelf(); return }
         docId=id; sessionId=UUID.randomUUID().toString(); page=startingPage.coerceAtLeast(0)
         val session = LectureSession(sessionId!!, System.currentTimeMillis(), 0, lang, emptyList())
@@ -153,6 +157,10 @@ class LectureRecorderService : Service() {
                 totalBytes+=read
                 cloud?.send(buffer,read)
                 val elapsedMs=totalBytes / 32L
+                if (maxDurationMs > 0L && elapsedMs >= maxDurationMs) {
+                    running=false
+                    sendStatus("duration_complete","Time limit reached; saving lecture audio")
+                }
                 if (elapsedMs-lastHeaderAt>=3000) {
                     WavFile.writeHeader(raf,totalBytes)
                     raf.seek(44L+totalBytes)
@@ -224,6 +232,7 @@ class LectureRecorderService : Service() {
             .putExtra(AudioSignals.FIELD_SESSION,sessionId)
             .putExtra(AudioSignals.FIELD_ELAPSED,elapsedStart)
             .putExtra(AudioSignals.FIELD_PARTIAL,partial)
+            .putExtra(AudioSignals.FIELD_DURATION,maxDurationMs)
             .putExtra("message",message)
         sendBroadcast(broadcast)
     }
