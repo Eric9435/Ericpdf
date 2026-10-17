@@ -62,7 +62,8 @@ private enum class PenTool { READ, PEN, HIGHLIGHT, ERASE }
 fun ReaderScreen(
     doc:LibraryDoc,lib:LocalLibrary,language:String,hasModel:Boolean,cloudMode:Boolean,recording:RecordingUiState,
     notice:String,refreshKey:Int,onBack:()->Unit,onLanguage:(String)->Unit,onMessage:(String)->Unit,
-    onExport:()->Unit,onExportText:(String)->Unit,onExportLiveNotes:(String)->Unit,
+    onExport:()->Unit,onExportText:(String)->Unit,onExportFinalPdf:(String)->Unit,
+    onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,
     onPage:(Int)->Unit,onStroke:(Int)->Unit,onRecordToggle:(Int)->Unit
 ) {
@@ -120,10 +121,19 @@ fun ReaderScreen(
                     finally { processing=false }
                 }
             },
-            onExportText=onExportText,onExportLiveNotes=onExportLiveNotes,
+            onExportText=onExportText,onExportFinalPdf=onExportFinalPdf,
+            onExportLiveNotes=onExportLiveNotes,
             onExportAudio=onExportAudio,onDeleteSession={session=null;onDeleteSession(it)},
             onSeekPage={page=it.coerceIn(0,doc.pageCount-1)},
-            onSessionUpdate={updated ->lib.putSession(doc.id,updated);session=updated},
+            onSessionUpdate={updated ->
+                lib.putSession(doc.id,updated)
+                val finalText=FinalLectureDocument.plainText(doc,updated)
+                if(finalText.isNotEmpty()) lib.saveFinalTranscript(doc.id,updated.id,finalText)
+                lib.invalidateFinalTranscriptPdf(doc.id,updated.id)
+                lib.saveGeneratedNotes(doc.id,updated.id,
+                    LiveLectureNotes.fromSegments(updated.segments))
+                session=updated
+            },
             modifier=panelModifier)
     }
 
@@ -480,7 +490,7 @@ private fun SidePanel(
     hasModel:Boolean,cloudMode:Boolean,language:String,onLanguage:(String)->Unit,
     tab:Int,onTab:(Int)->Unit,processing:Boolean,
     onRecordToggle:()->Unit,onRetranscribe:(LectureSession)->Unit,onExportText:(String)->Unit,
-    onExportLiveNotes:(String)->Unit,
+    onExportFinalPdf:(String)->Unit,onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,onSeekPage:(Int)->Unit,
     onSessionUpdate:(LectureSession)->Unit,modifier:Modifier=Modifier
 ) {
@@ -512,8 +522,8 @@ private fun SidePanel(
                 color=if(cloudMode||hasModel) Color(0xFF2B8A52) else Color(0xFFAF6917),
                 modifier=Modifier.align(Alignment.CenterVertically))
         }
-        TabRow(selectedTabIndex=tab) {
-            listOf("Page notes","Transcript","Live notes","Bookmarks").forEachIndexed { index,label ->
+        ScrollableTabRow(selectedTabIndex=tab,edgePadding=4.dp) {
+            listOf("Page notes","Transcript","Live notes","Final document","Bookmarks").forEachIndexed { index,label ->
                 Tab(selected=tab==index,onClick={onTab(index)},text={Text(label,maxLines=1,style=MaterialTheme.typography.labelSmall)})
             }
         }
@@ -566,7 +576,11 @@ private fun SidePanel(
                                     }
                                 } catch(e:Exception) {playingId=null;player?.release();player=null}
                             }) {Icon(if(playingId==session.id && player?.isPlaying==true) Icons.Default.Pause else Icons.Default.PlayArrow,"Play / Pause")}
-                            IconButton(onClick={onExportText(session.id)}) {Icon(Icons.Default.Description,"Save transcript TXT")}
+                            IconButton(onClick={onExportFinalPdf(session.id)},
+                                enabled=session.segments.any { it.text.isNotBlank() } && !hasRecording) {
+                                Icon(Icons.Default.PictureAsPdf,"Export final transcript PDF")
+                            }
+                            IconButton(onClick={onExportText(session.id)}) {Icon(Icons.Default.Description,"Save final transcript TXT")}
                             IconButton(onClick={onExportAudio(session.id)}) {Icon(Icons.Default.FileDownload,"Save lecture WAV")}
                             IconButton(onClick={confirmDelete=session}) {Icon(Icons.Default.DeleteOutline,"Delete recording")}
                         }
@@ -674,6 +688,67 @@ private fun SidePanel(
                         SelectionContainer {
                             Text(written,modifier=Modifier.fillMaxSize().verticalScroll(liveScroll),
                                 style=MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+            3 -> {
+                // Final documents are auto-generated from confirmed words when Stop completes.
+                val selected=session
+                val available=selected != null && FinalLectureDocument.hasWords(selected)
+                val finalizedText=if(available && selected!=null)
+                    FinalLectureDocument.plainText(doc,selected) else ""
+                Column(Modifier.fillMaxSize().padding(12.dp),
+                    verticalArrangement=Arrangement.spacedBy(9.dp)) {
+                    Text("FINAL LECTURE DOCUMENT",fontWeight=FontWeight.Bold,
+                        color=Color(0xFF234F98))
+                    if(sessions.isNotEmpty()) {
+                        Row(Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                            sessions.forEachIndexed { index,item ->
+                                FilterChip(selected=selected?.id==item.id,
+                                    onClick={selectSession(item)},
+                                    label={Text("Lecture ${sessions.size-index}")})
+                            }
+                        }
+                    }
+                    if(hasRecording) {
+                        Text("Finish recording to save the final transcript PDF and TXT.",
+                            style=MaterialTheme.typography.bodySmall)
+                    } else if(selected==null) {
+                        Text("Record a lecture to create your first final transcript.",
+                            style=MaterialTheme.typography.bodySmall)
+                    } else if(!available) {
+                        Text("The WAV recording was saved, but no recognized words are available. " +
+                            "Install the matching speech model and re-transcribe the recording.",
+                            style=MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick={onRetranscribe(selected)},
+                            enabled=hasModel && !processing) {
+                            Icon(Icons.Default.AutoAwesome,null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Extract words from saved WAV")
+                        }
+                        if(processing) CircularProgressIndicator()
+                    } else {
+                        Text("Saved locally in EricPDF with recording timestamps and slide references. " +
+                            "Export a copy to your Android Files / Documents folder.",
+                            style=MaterialTheme.typography.labelSmall,color=Color.Gray)
+                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Button(onClick={onExportFinalPdf(selected.id)},
+                                enabled=!processing,modifier=Modifier.weight(1f)) {
+                                Icon(Icons.Default.PictureAsPdf,null,Modifier.size(18.dp))
+                                Spacer(Modifier.width(5.dp));Text("Export PDF")
+                            }
+                            OutlinedButton(onClick={onExportText(selected.id)},
+                                modifier=Modifier.weight(1f)) {
+                                Icon(Icons.Default.Description,null,Modifier.size(18.dp))
+                                Spacer(Modifier.width(5.dp));Text("Export TXT")
+                            }
+                        }
+                        SelectionContainer {
+                            Text(finalizedText,modifier=Modifier.weight(1f)
+                                .verticalScroll(rememberScrollState()),
+                                style=MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
