@@ -87,6 +87,10 @@ fun ReaderScreen(
         var tab by remember { mutableIntStateOf(0) }
     val hasRecording=recording.docId==doc.id && recording.event !in setOf("idle","stopped","error")
     LaunchedEffect(hasRecording) { if(hasRecording) tab=2 }
+    // Show the newly finalized transcript when the professor's recording ends.
+    LaunchedEffect(recording.event) {
+        if(recording.event=="final_ready" || recording.event=="stopped") tab=3
+    }
 
     LaunchedEffect(refreshKey,doc.id) {
         sessions=lib.sessions(doc.id)
