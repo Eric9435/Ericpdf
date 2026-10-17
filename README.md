@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.6.1)
+## Implemented in this source project (v0.7.0)
 
 | Feature | Implementation |
 |---|---|
@@ -15,7 +15,7 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Notes | Autosaved typed note for every PDF page |
 | Lecture audio | Android foreground microphone service, 16kHz 16-bit mono WAV; recording persists across activity backgrounding while OS permits |
 | Live transcript | Interim offline Vosk text updates during speech; completed phrases are saved with timestamps |
-| Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp; export the notes as TXT |
+| Final lecture documents | Auto-create an app-private transcript TXT and PDF after recording stops, and export either to Android Files. Page references and timestamps are included; saved WAV is retained. |\n| Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp; export the notes as TXT |
 | Background lecture mode | User starts foreground microphone service while app is visible; recording, transcription and note-writing can continue after switching apps, subject to Android system limits |
 | After-lecture transcript | Re-transcribe a saved WAV with the matching Vosk model |
 | Playback | Per-session WAV playback and seek to timestamp using transcript segments |
@@ -36,6 +36,17 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 - **Visibility:** live text no longer disappears when the recording service emits its routine status heartbeat.
 - **Higher quality offline models:** small auto-downloaded Vosk models are optimized for phone resources, not maximum accuracy. Advanced users can manually import a compatible model from the [Vosk model catalog](https://alphacephei.com/vosk/models), but large desktop/server models may exceed Android memory. A better model is not automatically installed.
 - **Limits:** accuracy has not yet been measured on a real TUHH lecture recording. Online use requires a separately deployed private HTTPS proxy with a server-side provider key; this repository does not itself configure or deploy that service. English and German still require explicit selection. Keep the WAV and review any technical formulas or units against the lecture slides.
+
+
+## Finished lecture documents (v0.7.0)
+
+When **Stop** finishes the microphone capture and any queued cloud captions, EricPDF saves the original WAV as before, plus a final text transcript and a paginated PDF **inside its app-private document storage** (only when actual speech words were recognized). The final files are named `audio/<session-id>-final-transcript.txt` and `audio/<session-id>-final-transcript.pdf` beside the WAV and the existing JSON transcript. The PDF includes lecture title, course, recording date, language, duration, slide references and phrase timestamps.
+
+Open any PDF in the reader, expand the floating **Lecture Desk**, then select **Final document**. Choose an earlier lecture if necessary. Its text can be reviewed directly inside EricPDF. **Export PDF** and **Export TXT** create copies in a folder selected through Android's system Files picker; they do not publish or upload the recording. Export PDF always regenerates the document from the latest corrected words. Edits to transcript phrases also refresh the locally saved TXT; the local PDF is regenerated on the next export.
+
+If no words were detected, EricPDF **does not invent a transcript** or generate a blank final PDF. The original WAV remains available. Import the appropriate English/German Vosk model and choose **Extract words from saved WAV**. Offline re-transcription also recreates the final local TXT and PDF and leaves an earlier transcript intact if no words are detected. Recognition is imperfect, especially for technical expressions; verify it against the WAV and lecture slides.
+
+The generated PDF and TXT are included in the existing per-document backup/restore and are deleted along with the recording if you choose Delete recording. This feature doesn't require cloud storage, an API key or a new account if an offline Vosk model is already installed.
 
 ## Navigation and ownership
 
