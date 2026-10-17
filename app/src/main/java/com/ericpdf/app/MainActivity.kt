@@ -599,10 +599,10 @@ private fun HomeScreen(
                             else "Online transcription needs an OpenRouter proxy",
                             style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.SemiBold)
                         Text(if(onlineConfigured)
-                            "After recording begins, captions appear in ~6-second batches plus network processing."
+                            "Captions use overlapping 8-second audio windows (then every ~6 seconds), plus network processing."
                             else "1. Deploy the OpenRouter proxy on Render.  2. Add OPENROUTER_API_KEY and a private access code.  3. Enter its HTTPS /transcribe URL and code below.",
                             style=MaterialTheme.typography.bodySmall)
-                        Text("Online mode uploads ~6-second speech chunks to OpenRouter for transcription. Usage may incur charges.",
+                        Text("Online mode uploads overlapping audio windows (~33% extra audio for better word continuity). Usage may incur charges.",
                             style=MaterialTheme.typography.labelSmall,color=Color(0xFF81542C))
                     }
                 }
