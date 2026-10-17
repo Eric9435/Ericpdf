@@ -128,7 +128,7 @@ fun ReaderScreen(
             onSessionUpdate={updated ->
                 lib.putSession(doc.id,updated)
                 val finalText=FinalLectureDocument.plainText(doc,updated)
-                if(finalText.isNotEmpty()) lib.saveFinalTranscript(doc.id,updated.id,finalText)
+                lib.saveFinalTranscript(doc.id,updated.id,finalText)
                 lib.invalidateFinalTranscriptPdf(doc.id,updated.id)
                 lib.saveGeneratedNotes(doc.id,updated.id,
                     LiveLectureNotes.fromSegments(updated.segments))
