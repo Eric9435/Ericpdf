@@ -2,7 +2,7 @@
 
 Native Android PDF study notebook, inspired by the **workflow** of PDF note-taking apps such as Flexcil (not affiliated with Flexcil). Designed for lecture slides, handwritten notes, and professor recordings with a **private, local-first** architecture.
 
-## Implemented in this source project (v0.7.0)
+## Implemented in this source project (v0.6.0)
 
 | Feature | Implementation |
 |---|---|
@@ -14,9 +14,6 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Bookmarks | Local persistent per-PDF page bookmarks |
 | Notes | Autosaved typed note for every PDF page |
 | Lecture audio | Android foreground microphone service, 16kHz 16-bit mono WAV; recording persists across activity backgrounding while OS permits |
-| Automatic recording stop | Select 30 min, 1, 2, 3 or 4 hours in the Lecture Desk; the foreground service stops and finalizes the WAV at the selected audio duration |
-| Lecture start reminder | Tap Schedule beside Record, choose a future local date/time and duration; Android notifies you to open the selected PDF and tap Record (background microphone auto-start is intentionally prohibited) |
-| Windows desktop edition | PDF reader, scheduled starts, duration-based WAV auto-stop and optional Vosk offline captions; Windows EXE is built by a separate GitHub Actions workflow |
 | Live transcript | Interim offline Vosk text updates during speech; completed phrases are saved with timestamps |
 | Automatically written live notes | New **Live notes** tab shows provisional speech and permanently stores confirmed phrases with page and timestamp; export the notes as TXT |
 | Background lecture mode | User starts foreground microphone service while app is visible; recording, transcription and note-writing can continue after switching apps, subject to Android system limits |
@@ -29,14 +26,6 @@ Native Android PDF study notebook, inspired by the **workflow** of PDF note-taki
 | Backup / restore | Folder tree metadata is included in ZIP archives; manual ZIP export/restore and optional automatic local backups to user-selected Android Documents folder (Storage Access Framework). Worker schedules after edits, after completed recording and every 6 hours; last 3 automatic snapshots kept. |
 
 > **Status:** Pre-release developer build, not production-certified. GitHub Actions compiles a debug APK and runs JVM tests. Real phone / microphone / screen-lock tests are still required before relying on it for critical lectures.
-
-## Timed recordings and scheduled start (v0.7.0)
-
-**Android:** Open any PDF → pull out the floating **Lecture Desk** → choose **Auto-stop: 30m / 1h / 2h / 3h / 4h** → tap **Record** and confirm microphone permission. The recorder stops itself after the selected duration, finalizes the WAV and persists captions when an appropriate speech model is available. You can stop earlier from the recording control or Android notification.
-
-For future lecture starts, tap the **schedule clock icon** in Lecture Desk. Choose the reminder date and time and planned duration. Grant notification permission when Android requests it. The reminder is scheduled with WorkManager, so Android battery settings and sleep may delay delivery; it is **not an exact alarm**. Tapping the notification opens the PDF; you must tap **Record** to activate the microphone. No silent recording takes place.
-
-**Windows:** [EricPDF Windows installation and limitations](windows/README.md). The Windows EXE builds through [EricPDF Windows EXE Actions](https://github.com/Eric9435/Ericpdf/actions/workflows/windows.yml). Windows can start a previously armed scheduled recording while the app remains running (including in the system tray). The PC must be awake and the app must still be running.
 
 ## Navigation and ownership
 

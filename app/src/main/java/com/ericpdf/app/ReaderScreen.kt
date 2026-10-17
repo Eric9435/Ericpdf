@@ -61,18 +61,13 @@ private enum class PenTool { READ, PEN, HIGHLIGHT, ERASE }
 @Composable
 fun ReaderScreen(
     doc:LibraryDoc,lib:LocalLibrary,language:String,hasModel:Boolean,cloudMode:Boolean,recording:RecordingUiState,
-    initialDurationMs:Long=10_800_000L,
     notice:String,refreshKey:Int,onBack:()->Unit,onLanguage:(String)->Unit,onMessage:(String)->Unit,
     onExport:()->Unit,onExportText:(String)->Unit,onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,
-    onPage:(Int)->Unit,onStroke:(Int)->Unit,onRecordToggle:(Int,Long)->Unit
+    onPage:(Int)->Unit,onStroke:(Int)->Unit,onRecordToggle:(Int)->Unit
 ) {
     val scope=rememberCoroutineScope()
     val context=LocalContext.current
-    var durationMinutes by rememberSaveable(doc.id) { mutableIntStateOf((initialDurationMs/60_000L).toInt().coerceIn(1,480)) }
-    var showSchedule by remember { mutableStateOf(false) }
-    var scheduleRevision by remember { mutableIntStateOf(0) }
-    val existingSchedule=remember(doc.id,scheduleRevision) { LectureScheduler.read(context,doc.id) }
     var page by remember(doc.id) { mutableIntStateOf(doc.lastPage.coerceIn(0,doc.pageCount-1)) }
     var penTool by remember { mutableStateOf(PenTool.READ) }
     var color by remember { mutableIntStateOf(InkBlue) }
@@ -113,9 +108,7 @@ fun ReaderScreen(
     val deskContent: @Composable (Modifier) -> Unit = { panelModifier ->
         SidePanel(doc,lib,page,bookmarks,sessions,session,{session=it},recording,hasRecording,hasModel,cloudMode,
             language,onLanguage,tab,{tab=it},processing,
-            onRecordToggle={onRecordToggle(page,durationMinutes*60_000L)},
-            durationMinutes=durationMinutes,onDurationMinutes={durationMinutes=it},
-            scheduledPlan=existingSchedule,onSchedule={showSchedule=true},
+            onRecordToggle={onRecordToggle(page)},
             onRetranscribe={selected ->
                 scope.launch {
                     processing=true
@@ -134,22 +127,6 @@ fun ReaderScreen(
             modifier=panelModifier)
     }
 
-    if(showSchedule) RecordingScheduleDialog(
-        title=doc.title,initialMinutes=durationMinutes,existing=existingSchedule,
-        onDismiss={showSchedule=false},
-        onSchedule={at,mins->
-            try {
-                LectureScheduler.set(context,doc.id,doc.title,at,mins)
-                durationMinutes=mins;scheduleRevision++;showSchedule=false
-                onMessage("Lecture reminder scheduled; tap the notification to start recording.")
-            } catch(e:Exception) {onMessage(e.message?:"Unable to schedule lecture")}
-        },
-        onCancel={
-            LectureScheduler.cancel(context,doc.id)
-            scheduleRevision++;showSchedule=false
-            onMessage("Lecture reminder canceled")
-        }
-    )
     BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFFE8EBF1))) {
         val density=LocalDensity.current
         val tabWidth=52.dp
@@ -500,8 +477,6 @@ private fun SidePanel(
     selectSession:(LectureSession)->Unit,recording:RecordingUiState,hasRecording:Boolean,
     hasModel:Boolean,cloudMode:Boolean,language:String,onLanguage:(String)->Unit,
     tab:Int,onTab:(Int)->Unit,processing:Boolean,
-    durationMinutes:Int,onDurationMinutes:(Int)->Unit,
-    scheduledPlan:LectureRecordingPlan?,onSchedule:()->Unit,
     onRecordToggle:()->Unit,onRetranscribe:(LectureSession)->Unit,onExportText:(String)->Unit,
     onExportLiveNotes:(String)->Unit,
     onExportAudio:(String)->Unit,onDeleteSession:(String)->Unit,onSeekPage:(Int)->Unit,
@@ -518,7 +493,6 @@ private fun SidePanel(
             Text("LECTURE DESK",fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelMedium,
                 color=Color(0xFF4F6FA4),modifier=Modifier.weight(1f))
             val recColor=if(hasRecording) Color(0xFFE44343) else Color(0xFF244E89)
-            IconButton(onClick=onSchedule) {Icon(Icons.Default.Schedule,"Schedule recording")}
             FilledTonalButton(onClick=onRecordToggle,contentPadding=PaddingValues(horizontal=10.dp,vertical=5.dp),
                 colors=ButtonDefaults.filledTonalButtonColors(containerColor=if(hasRecording) Color(0xFFFDE7E7) else Color(0xFFE5EDFF))) {
                 Icon(if(hasRecording) Icons.Default.Stop else Icons.Default.Mic,null,Modifier.size(17.dp),tint=recColor)
@@ -526,24 +500,8 @@ private fun SidePanel(
                 Text(if(hasRecording) "Stop" else "Record",color=recColor)
             }
         }
-        if(hasRecording) Text("● Recording · ${if(recording.elapsedStart>0) humanTime(SystemClock.elapsedRealtime()-recording.elapsedStart) else "Starting…"}" +
-            (if(recording.maxDurationMs>0L && recording.elapsedStart>0L)
-                " · remaining ${humanTime((recording.maxDurationMs-(SystemClock.elapsedRealtime()-recording.elapsedStart)).coerceAtLeast(0L))}"
-             else ""),
+        if(hasRecording) Text("● Recording · ${if(recording.elapsedStart>0) humanTime(SystemClock.elapsedRealtime()-recording.elapsedStart) else "Starting…"}",
             Modifier.padding(horizontal=12.dp),style=MaterialTheme.typography.labelSmall,color=Color(0xFFC73939))
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=10.dp),
-            horizontalArrangement=Arrangement.spacedBy(6.dp),verticalAlignment=Alignment.CenterVertically) {
-            Text("Auto-stop",style=MaterialTheme.typography.labelSmall)
-            listOf(30,60,120,180,240).forEach { mins->
-                FilterChip(selected=durationMinutes==mins,onClick={onDurationMinutes(mins)},
-                    label={Text(if(mins<60) "${mins}m" else "${mins/60}h")})
-            }
-        }
-        if(scheduledPlan!=null) Text("Reminder: "+
-            java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.SHORT)
-                .format(java.util.Date(scheduledPlan.startsAt)),
-            Modifier.padding(horizontal=12.dp),style=MaterialTheme.typography.labelSmall,
-            color=Color(0xFF285E9C))
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=10.dp),
             horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             FilterChip(selected=language=="en",onClick={onLanguage("en")},label={Text("EN")})

@@ -57,20 +57,17 @@ class MainActivity:ComponentActivity() {
             MaterialTheme(colorScheme=lightColorScheme(
                 primary=Accent,onPrimary=Color.White,background=Mist,surface=Color.White,
                 onSurface=Navy,secondary=Color(0xFF3C5C80)
-            )) { MainApp(
-                startDocId=intent?.getStringExtra(LectureScheduler.OPEN_DOC),
-                startDurationMs=intent?.getLongExtra(LectureScheduler.OPEN_DURATION,10_800_000L) ?: 10_800_000L
-            ) }
+            )) { MainApp() }
         }
     }
 }
 
 data class RecordingUiState(val event:String="idle",val docId:String?=null,
     val sessionId:String?=null,val elapsedStart:Long=0L,val error:String="",
-    val partial:String="",val maxDurationMs:Long=0L)
+    val partial:String="")
 
 @Composable
-private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
+private fun MainApp() {
     val context=LocalContext.current
     val lib=remember { LocalLibrary(context.applicationContext) }
     val scope=rememberCoroutineScope()
@@ -79,8 +76,7 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
     var libraryFolderId by rememberSaveable {mutableStateOf<String?>(null)}
     var librarySettings by rememberSaveable {mutableStateOf(false)}
     var pendingImportFolder by remember {mutableStateOf<String?>(null)}
-    var activeId by rememberSaveable { mutableStateOf(startDocId) }
-    var selectedDurationMs by rememberSaveable { mutableLongStateOf(startDurationMs) }
+    var activeId by rememberSaveable { mutableStateOf<String?>(null) }
     var toast by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var backupEnabled by remember { mutableStateOf(AutoBackup.hasFolder(context)) }
@@ -141,8 +137,7 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_DOC),
                     if(isFinished) null else intent.getStringExtra(AudioSignals.FIELD_SESSION),
                     intent.getLongExtra(AudioSignals.FIELD_ELAPSED,0L),intent.getStringExtra("message") ?: "",
-                    intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "",
-                    intent.getLongExtra(AudioSignals.FIELD_DURATION,0L))
+                    intent.getStringExtra(AudioSignals.FIELD_PARTIAL) ?: "")
                 if (event=="model_error" || event=="model_missing" || event=="cloud_error" || event=="error") {
                     toast=recording.error
                 }
@@ -269,7 +264,6 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
                 action=AudioSignals.START;putExtra(AudioSignals.FIELD_DOC,activeId);putExtra("language",speechLanguage);putExtra("page",pendingMicPage)
                 putExtra("cloudMode",cloudMode);putExtra("cloudEndpoint",cloudEndpoint.trim())
                 putExtra("cloudCode",cloudCode)
-                putExtra(AudioSignals.FIELD_DURATION,selectedDurationMs)
             })
             recording=RecordingUiState(event="starting",docId=activeId)
         } else toast="Microphone permission is required for recordings"
@@ -344,7 +338,6 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
             val item=docs.firstOrNull { it.id==activeId }
             if(item==null) { LaunchedEffect(activeId) { activeId=null } }
             else ReaderScreen(doc=item,lib=lib,language=speechLanguage,cloudMode=cloudMode,
-                initialDurationMs=selectedDurationMs,
                 hasModel=hasOfflineModel,recording=recording,
                 notice=toast,refreshKey=refreshKey,
                 onBack={activeId=null;refresh()},
@@ -377,8 +370,7 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
                         }
                     }
                 },
-                onRecordToggle={ currentPage,durationMs ->
-                    selectedDurationMs=durationMs
+                onRecordToggle={ currentPage ->
                     if (recording.docId==item.id && recording.event !in setOf("idle","stopped","error")) {
                         context.startService(Intent(context,LectureRecorderService::class.java).apply {action=AudioSignals.STOP})
                         recording=recording.copy(event="stopping")
@@ -429,7 +421,6 @@ private fun MainApp(startDocId:String?=null,startDurationMs:Long=10_800_000L) {
                     putExtra("language",speechLanguage);putExtra("page",pendingMicPage)
                 putExtra("cloudMode",cloudMode);putExtra("cloudEndpoint",cloudEndpoint.trim())
                 putExtra("cloudCode",cloudCode)
-                putExtra(AudioSignals.FIELD_DURATION,selectedDurationMs)
                 })
                 recording=RecordingUiState(event="starting",docId=activeId)
             } else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
