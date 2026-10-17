@@ -211,7 +211,9 @@ fun ReaderScreen(
                 if(hasRecording && captionsVisible) {
                     val lastFinal=sessions.firstOrNull {it.id==recording.sessionId}
                         ?.segments?.lastOrNull()?.text.orEmpty()
-                    val caption=recording.partial.ifBlank {lastFinal.ifBlank {"Listening to lecture…"}}
+                    val caption=if(cloudMode && recording.partial.startsWith("Transcribing audio ")) {
+                         lastFinal.ifBlank {recording.partial}
+                     } else recording.partial.ifBlank {lastFinal.ifBlank {"Listening to lecture…"}}
                     Surface(
                         modifier=Modifier.align(Alignment.BottomCenter).fillMaxWidth(0.90f)
                             .padding(bottom=70.dp),
