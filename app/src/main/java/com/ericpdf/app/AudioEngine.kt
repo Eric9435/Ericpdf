@@ -107,7 +107,7 @@ class LectureRecorderService : Service() {
         try {
             val min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             require(min > 0) { "16 kHz microphone capture not available" }
-            audio=AudioRecord(MediaRecorder.AudioSource.MIC,16000,AudioFormat.CHANNEL_IN_MONO,
+            audio=AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,max(8192,min * 2))
             require(audio.state == AudioRecord.STATE_INITIALIZED) { "Unable to initialize microphone" }
             capture=audio
@@ -117,10 +117,13 @@ class LectureRecorderService : Service() {
                 try {
                     cloud=OnlineLectureTranscriber(endpoint,code,session.language,
                         partial={sendStatus("partial",partial=it)},
-                        final={phrase ->
+                        final={phrase, startMs, endMs ->
                             synchronized(segments) {
-                                val end=(SystemClock.elapsedRealtime()-elapsedStart).coerceAtLeast(0)
-                                segments.add(TranscriptSegment(lastSegmentEnd,end,phrase.take(20000),page))
+                                val begin=maxOf(lastSegmentEnd,startMs)
+                                val end=maxOf(begin,endMs)
+                                val recordedPage=library.cues(id,session.id)
+                                    .lastOrNull { it.timeMs<=begin }?.page ?: page
+                                segments.add(TranscriptSegment(begin,end,phrase.take(20000),recordedPage))
                                 lastSegmentEnd=end
                                 persistTranscriptAndNotes(id,session,end,segments)
                             }
